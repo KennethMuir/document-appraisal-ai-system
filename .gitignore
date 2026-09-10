@@ -1,0 +1,14 @@
+node_modules/
+.next/
+dist/
+build/
+.env
+.env.local
+.env.*.local
+*.log
+
+storage/documents/*
+storage/temporary/*
+
+!storage/documents/.gitkeep
+!storage/temporary/.gitkeep
