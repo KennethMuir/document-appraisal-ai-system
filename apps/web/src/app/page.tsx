@@ -170,9 +170,209 @@ export default function Home() {
   const [departments, setDepartments] =
     useState<Department[]>([]);
 
+  const [departmentModalOpen, setDepartmentModalOpen] =
+    useState(false);
+
+  const [departmentEditingId, setDepartmentEditingId] =
+    useState<number | null>(null);
+
+  const [departmentForm, setDepartmentForm] = useState({
+    name: "",
+    code: "",
+    description: "",
+  });
+
+  const [departmentMutationError, setDepartmentMutationError] =
+    useState("");
+
+  const [departmentSaving, setDepartmentSaving] =
+    useState(false);
+
   const [documentTypes, setDocumentTypes] =
     useState<DocumentType[]>([]);
 
+  const refreshDepartments = async () => {
+    const response =
+      await fetch(`${API_URL}/api/departments`);
+
+    const data =
+      await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error ||
+          "Unable to retrieve departments."
+      );
+    }
+
+    setDepartments(
+      Array.isArray(data.departments)
+        ? data.departments
+        : []
+    );
+  };
+
+  const openAddDepartmentModal = () => {
+    setDepartmentEditingId(null);
+
+    setDepartmentForm({
+      name: "",
+      code: "",
+      description: "",
+    });
+
+    setDepartmentMutationError("");
+    setDepartmentModalOpen(true);
+  };
+
+  const openEditDepartmentModal = (
+    department: Department
+  ) => {
+    setDepartmentEditingId(
+      department.id
+    );
+
+    setDepartmentForm({
+      name: department.name,
+      code: department.code,
+      description:
+        department.description || "",
+    });
+
+    setDepartmentMutationError("");
+    setDepartmentModalOpen(true);
+  };
+
+  const closeDepartmentModal = () => {
+    if (departmentSaving) {
+      return;
+    }
+
+    setDepartmentModalOpen(false);
+    setDepartmentMutationError("");
+  };
+
+  const saveDepartment = async () => {
+    const name =
+      departmentForm.name.trim();
+
+    const code =
+      departmentForm.code
+        .trim()
+        .toUpperCase();
+
+    const description =
+      departmentForm.description.trim();
+
+    if (!name || !code) {
+      setDepartmentMutationError(
+        "Department name and code are required."
+      );
+
+      return;
+    }
+
+    setDepartmentSaving(true);
+    setDepartmentMutationError("");
+
+    try {
+      const endpoint =
+        departmentEditingId === null
+          ? `${API_URL}/api/departments`
+          : `${API_URL}/api/departments/${departmentEditingId}`;
+
+      const response =
+        await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            name,
+            code,
+            description,
+          }),
+        });
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error ||
+            "Unable to save department."
+        );
+      }
+
+      await refreshDepartments();
+
+      setDepartmentModalOpen(false);
+      setDepartmentMutationError("");
+    } catch (error) {
+      setDepartmentMutationError(
+        error instanceof Error
+          ? error.message
+          : "Unable to save department."
+      );
+    } finally {
+      setDepartmentSaving(false);
+    }
+  };
+
+  const deleteDepartment = async (
+    department: Department
+  ): Promise<boolean> => {
+    const confirmed =
+      window.confirm(
+        `Delete the "${department.name}" department? Existing metadata and documents will remain, but their department assignment will become unassigned.`
+      );
+
+    if (!confirmed) {
+      return false;
+    }
+
+    setDepartmentMutationError("");
+
+    try {
+      const response =
+        await fetch(
+          `${API_URL}/api/departments/${department.id}/delete`,
+          {
+            method: "POST",
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.error ||
+            "Unable to delete department."
+        );
+      }
+
+      if (
+        selectedDepartmentId ===
+        department.id
+      ) {
+        setSelectedDepartmentId(null);
+      }
+
+      await refreshDepartments();
+
+      return true;
+    } catch (error) {
+      setDepartmentMutationError(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete department."
+      );
+
+      return false;
+    }
+  };
   const [documents, setDocuments] =
     useState<UploadedDocument[]>([]);
 
@@ -219,6 +419,17 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
 
   const [searchTerm, setSearchTerm] =
     useState("");
+
+const [selectedDepartmentId, setSelectedDepartmentId] =
+  useState<number | null>(null);
+
+const openDepartmentRecords = (
+  department: Department
+) => {
+  setSelectedDepartmentId(department.id);
+  setSearchTerm("");
+  setActivePage("Metadata Registry");
+};
 
   const appContentRef =
     useRef<HTMLDivElement | null>(null);
@@ -352,6 +563,23 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
 
   const filteredMetadata =
     metadata.filter((record: MetadataRecord) => {
+      if (selectedDepartmentId !== null) {
+        const department =
+          departments.find(
+            (item) =>
+              item.id ===
+              selectedDepartmentId
+          );
+
+        if (
+          !department ||
+          record.department_name !==
+            department.name
+        ) {
+          return false;
+        }
+      }
+
       const query =
         searchTerm.trim().toLowerCase();
 
@@ -378,7 +606,32 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
             .includes(query)
         );
     });
-  const loadData = async () => {
+const selectedDepartment =
+  selectedDepartmentId !== null
+    ? departments.find(
+        (department) =>
+          department.id ===
+          selectedDepartmentId
+      ) ?? null
+    : null;
+
+const selectedDepartmentDocuments =
+  selectedDepartmentId !== null
+    ? documents.filter((document) => {
+        const documentDepartmentId =
+          document.department_id;
+
+        return (
+          documentDepartmentId !==
+            undefined &&
+          documentDepartmentId !==
+            null &&
+          Number(documentDepartmentId) ===
+            selectedDepartmentId
+        );
+      })
+    : [];
+const loadData = async () => {
     try {
       setLoading(true);
 
@@ -1550,8 +1803,8 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
                                 department.id
                               }
                               onClick={() =>
-                                setActivePage(
-                                  "Departments"
+                                openDepartmentRecords(
+                                  department
                                 )
                               }
                               className="group rounded-xl border border-slate-200 p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
@@ -1671,6 +1924,122 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
             {activePage ===
               "Metadata Registry" && (
               <>
+                {selectedDepartment && (
+                  <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                    <div className="flex flex-col justify-between gap-4 border-b border-slate-200 px-6 py-5 md:flex-row md:items-center">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                          Department records
+                        </p>
+                        <h2 className="mt-1 text-xl font-bold text-slate-950">
+                          {selectedDepartment.name}
+                        </h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                          All documents currently assigned to{" "}
+                          {selectedDepartment.name}.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedDepartmentId(null)
+                        }
+                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                      >
+                        View All Metadata
+                      </button>
+                    </div>
+
+                    {selectedDepartmentDocuments.length === 0 ? (
+                      <div className="p-8 text-center">
+                        <p className="text-sm font-semibold text-slate-700">
+                          No documents assigned to this department.
+                        </p>
+                        <p className="mt-1 text-sm text-slate-500">
+                          Uploaded documents assigned to{" "}
+                          {selectedDepartment.name} will appear here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-slate-200">
+                          <thead className="bg-slate-50">
+                            <tr>
+                              <th
+                                scope="col"
+                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
+                              >
+                                Document Code
+                              </th>
+                              <th
+                                scope="col"
+                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
+                              >
+                                Filename
+                              </th>
+                              <th
+                                scope="col"
+                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
+                              >
+                                Type
+                              </th>
+                              <th
+                                scope="col"
+                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
+                              >
+                                Size
+                              </th>
+                              <th
+                                scope="col"
+                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
+                              >
+                                Status
+                              </th>
+                            </tr>
+                          </thead>
+
+                          <tbody className="divide-y divide-slate-100 bg-white">
+                            {selectedDepartmentDocuments.map(
+                              (document) => (
+                                <tr key={String(document.id)}>
+                                  <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-900">
+                                    {document.document_code ?? "—"}
+                                  </td>
+
+                                  <td className="px-6 py-4 text-sm text-slate-700">
+                                    {document.filename ?? "—"}
+                                  </td>
+
+                                  <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
+                                    {document.file_type ?? "—"}
+                                  </td>
+
+                                  <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
+                                    {formatFileSize(
+                                      document.file_size as
+                                        | number
+                                        | undefined
+                                    )}
+                                  </td>
+
+                                  <td className="whitespace-nowrap px-6 py-4">
+                                    <StatusBadge
+                                      status={
+                                        document.status ??
+                                        "UNKNOWN"
+                                      }
+                                    />
+                                  </td>
+                                </tr>
+                              )
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                )}
                 <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <SummaryCard
                     label="Metadata Records"
@@ -2273,6 +2642,217 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
             {/* ===================================================== */}
             {/* DEPARTMENTS */}
             {/* ===================================================== */}
+            {departmentModalOpen && (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
+                role="presentation"
+                onMouseDown={(event) => {
+                  if (
+                    event.target ===
+                    event.currentTarget
+                  ) {
+                    closeDepartmentModal();
+                  }
+                }}
+              >
+                <div
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="department-modal-title"
+                  className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
+                        Department management
+                      </p>
+
+                      <h2
+                        id="department-modal-title"
+                        className="mt-1 text-xl font-bold text-slate-900"
+                      >
+                        {departmentEditingId === null
+                          ? "Add Department"
+                          : "Edit Department"}
+                      </h2>
+
+                      <p className="mt-2 text-sm text-slate-500">
+                        {departmentEditingId === null
+                          ? "Create a department for organizing institutional records."
+                          : "Update the department details used throughout the system."}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={closeDepartmentModal}
+                      disabled={departmentSaving}
+                      aria-label="Close department dialog"
+                      className="rounded-lg p-2 text-xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="mt-6 space-y-5">
+                    <div>
+                      <label
+                        htmlFor="department-name"
+                        className="block text-sm font-semibold text-slate-700"
+                      >
+                        Department Name
+                      </label>
+
+                      <input
+                        id="department-name"
+                        type="text"
+                        value={departmentForm.name}
+                        onChange={(event) =>
+                          setDepartmentForm(
+                            (current) => ({
+                              ...current,
+                              name:
+                                event.target.value,
+                            })
+                          )
+                        }
+                        disabled={departmentSaving}
+                        autoFocus
+                        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50"
+                        placeholder="e.g. Human Resources"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="department-code"
+                        className="block text-sm font-semibold text-slate-700"
+                      >
+                        Department Code
+                      </label>
+
+                      <input
+                        id="department-code"
+                        type="text"
+                        value={departmentForm.code}
+                        onChange={(event) =>
+                          setDepartmentForm(
+                            (current) => ({
+                              ...current,
+                              code:
+                                event.target.value.toUpperCase(),
+                            })
+                          )
+                        }
+                        disabled={departmentSaving}
+                        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium uppercase text-slate-900 outline-none transition placeholder:normal-case placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50"
+                        placeholder="e.g. HR"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="department-description"
+                        className="block text-sm font-semibold text-slate-700"
+                      >
+                        Description
+                      </label>
+
+                      <textarea
+                        id="department-description"
+                        rows={4}
+                        value={departmentForm.description}
+                        onChange={(event) =>
+                          setDepartmentForm(
+                            (current) => ({
+                              ...current,
+                              description:
+                                event.target.value,
+                            })
+                          )
+                        }
+                        disabled={departmentSaving}
+                        className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50"
+                        placeholder="Describe the department's role..."
+                      />
+                    </div>
+
+                    {departmentMutationError && (
+                      <p
+                        role="alert"
+                        className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
+                      >
+                        {departmentMutationError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-between gap-3">
+                    <div>
+                      {departmentEditingId !== null && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const department =
+                              departments.find(
+                                (item) =>
+                                  item.id ===
+                                  departmentEditingId
+                              );
+
+                            if (!department) {
+                              setDepartmentMutationError(
+                                "Unable to find the department to delete."
+                              );
+                              return;
+                            }
+
+                            const deleted =
+                              await deleteDepartment(
+                                department
+                              );
+
+                            if (deleted) {
+                              closeDepartmentModal();
+                            }
+                          }}
+                          disabled={departmentSaving}
+                          className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Delete Department
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={closeDepartmentModal}
+                        disabled={departmentSaving}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={saveDepartment}
+                        disabled={departmentSaving}
+                        aria-busy={departmentSaving}
+                        className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {departmentSaving
+                          ? "Saving..."
+                          : departmentEditingId === null
+                            ? "Create Department"
+                            : "Save Changes"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
 
             {activePage ===
               "Departments" && (
@@ -2290,47 +2870,96 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
                     Browse the organizational departments used to classify
                     institutional records.
                   </p>
+
+                  <div className="mt-5 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={openAddDepartmentModal}
+                      className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                    >
+                      + Add Department
+                    </button>
+
+                    {departmentMutationError &&
+                      !departmentModalOpen && (
+                        <p
+                          role="alert"
+                          className="text-sm font-medium text-red-600"
+                        >
+                          {departmentMutationError}
+                        </p>
+                      )}
+                  </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                   {departments.map(
                     (department) => (
                       <div
                         key={
                           department.id
                         }
-                        className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-slate-300 hover:shadow"
+                        className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow"
                       >
-                        <div className="flex items-start justify-between">
-                          <div
-                            aria-hidden="true"
-                            className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-sm font-bold text-slate-700"
-                          >
-                            {department.code.slice(
-                              0,
-                              2
-                            )}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openDepartmentRecords(
+                              department
+                            )
+                          }
+                          className="block w-full p-6 text-left focus:outline-none focus:ring-2 focus:ring-inset focus:ring-slate-900"
+                          aria-label={`View documents and metadata for ${department.name}`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div
+                              aria-hidden="true"
+                              className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-sm font-bold text-slate-700"
+                            >
+                              {department.code.slice(
+                                0,
+                                2
+                              )}
+                            </div>
+
+                            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                              {
+                                department.code
+                              }
+                            </span>
                           </div>
 
-                          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                          <h3 className="mt-5 text-lg font-bold">
                             {
-                              department.code
+                              department.name
                             }
-                          </span>
+                          </h3>
+
+                          <p className="mt-2 text-sm leading-6 text-slate-500">
+                            {
+                              department.description ||
+                              "No department description available."
+                            }
+                          </p>
+
+                          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                            View department records →
+                          </p>
+                        </button>
+
+                        <div className="flex items-center border-t border-slate-100 px-6 py-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              openEditDepartmentModal(
+                                department
+                              )
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                          >
+                            Edit
+                          </button>
                         </div>
-
-                        <h3 className="mt-5 text-lg font-bold">
-                          {
-                            department.name
-                          }
-                        </h3>
-
-                        <p className="mt-2 text-sm leading-6 text-slate-500">
-                          {
-                            department.description ||
-                            "No department description available."
-                          }
-                        </p>
                       </div>
                     )
                   )}
@@ -2338,7 +2967,6 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
               </>
             )}
 
-            {/* ===================================================== */}
             {/* SETTINGS */}
             {/* ===================================================== */}
 
@@ -3804,4 +4432,13 @@ function SettingRow({
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
 
