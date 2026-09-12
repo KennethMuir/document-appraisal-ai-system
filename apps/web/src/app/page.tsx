@@ -1,4 +1,4 @@
-    "use client";
+"use client";
 
 import {
   useEffect,
@@ -45,6 +45,7 @@ type MetadataRecord = {
   year: number | null;
   person_name: string | null;
   description: string | null;
+  section: string | null;
   status: string;
   department_name: string | null;
   document_type_name: string | null;
@@ -63,11 +64,40 @@ type UploadedDocument = {
   status?: string;
 };
 
-type ApiResponse<T = unknown> = {
-  success?: boolean;
-  error?: string;
-  [key: string]: unknown;
-} & T;
+type UploadedAppraisal = {
+  matchType:
+    | "STRONG_MATCH"
+    | "PARTIAL_MATCH"
+    | "NO_MATCH";
+  confidence: number;
+  metadataRecordId: number | null;
+  matchingFields: string[];
+  conflictingFields: string[];
+  decision: string;
+  metadata?: {
+    id?: string | number;
+    reference_code?: string | null;
+    title?: string | null;
+    document_date?: string | null;
+    year?: number | null;
+    person_name?: string | null;
+    description?: string | null;
+    section?: string | null;
+    department_id?: string | number | null;
+    document_type_id?: string | number | null;
+  } | null;
+  match?: {
+    id?: string | number;
+    document_id?: string | number;
+    metadata_record_id?: string | number | null;
+    match_type?: string;
+    confidence?: number | null;
+    matching_fields?: string | null;
+    conflicting_fields?: string | null;
+    decision?: string;
+    created_at?: string;
+  };
+};
 
 const statCards = [
   {
@@ -116,6 +146,7 @@ const EMPTY_FORM = {
   documentTypeId: "",
   year: "",
   documentDate: "",
+  section: "",
   description: "",
 };
 
@@ -157,6 +188,27 @@ export default function Home() {
   const [uploadedDocument, setUploadedDocument] =
     useState<UploadedDocument | null>(null);
 
+  const [uploadedAppraisal, setUploadedAppraisal] =
+    useState<UploadedAppraisal | null>(null);
+const [appraisalMetadataForm, setAppraisalMetadataForm] =
+  useState({
+    referenceCode: "",
+    title: "",
+    documentDate: "",
+    year: "",
+    personName: "",
+    departmentId: "",
+    documentTypeId: "",
+    section: "",
+    description: "",
+  });
+
+  const [reviewingDecision, setReviewingDecision] =
+    useState(false);
+
+  const [reviewError, setReviewError] =
+    useState("");
+
   const [searchTerm, setSearchTerm] =
     useState("");
 
@@ -169,9 +221,155 @@ export default function Home() {
   const modalCloseButtonRef =
     useRef<HTMLButtonElement | null>(null);
 
+  const previousFocusedElementRef =
+    useRef<HTMLElement | null>(null);
+
+  const previousBodyOverflowRef =
+    useRef("");
+
+  const bodyScrollLockActiveRef =
+    useRef(false);
+
+  const uploadingRef =
+    useRef(false);
+
   const [form, setForm] =
     useState(EMPTY_FORM);
 
+  /*
+   * Keep the upload state available to the modal keyboard handler
+   * without making the focus-management effect restart during upload.
+   */
+  useEffect(() => {
+    uploadingRef.current = uploading;
+  }, [uploading]);
+
+  const getStatValue = (
+    key: (typeof statCards)[number]["key"]
+  ): string | number => {
+    if (!statistics) return "—";
+
+    return statistics[key] ?? "—";
+  };
+
+  const formatDate = (
+    value: string | null | undefined
+  ): string => {
+    if (!value) return "—";
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    return new Intl.DateTimeFormat(
+      "en-GB",
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }
+    ).format(date);
+  };
+
+  const formatFileSize = (
+    value: number | null | undefined
+  ): string => {
+    if (
+      value === null ||
+      value === undefined ||
+      Number.isNaN(value)
+    ) {
+      return "—";
+    }
+
+    if (value < 1024) {
+      return `${value} B`;
+    }
+
+    if (value < 1024 * 1024) {
+      return `${(value / 1024).toFixed(1)} KB`;
+    }
+
+    if (value < 1024 * 1024 * 1024) {
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    return `${(
+      value /
+      (1024 * 1024 * 1024)
+    ).toFixed(1)} GB`;
+  };
+
+  const formatUploadFieldLabel = (
+    value: string
+  ): string => {
+    return value
+      .replace(/_/g, " ")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/\b\w/g, (letter) =>
+        letter.toUpperCase()
+      );
+  };
+
+  const formatUploadFieldValue = (
+    key: string,
+    value: unknown
+  ): string => {
+    if (
+      value === null ||
+      value === undefined ||
+      value === ""
+    ) {
+      return "—";
+    }
+
+    if (typeof value === "boolean") {
+      return value ? "Yes" : "No";
+    }
+
+    if (
+      typeof value === "object"
+    ) {
+      try {
+        return JSON.stringify(value);
+      } catch {
+        return "—";
+      }
+    }
+
+    return String(value);
+  };
+
+  const filteredMetadata =
+    metadata.filter((record: MetadataRecord) => {
+      const query =
+        searchTerm.trim().toLowerCase();
+
+      if (!query) {
+        return true;
+      }
+
+      return [
+        record.reference_code,
+        record.title,
+        record.person_name,
+        record.description,
+        record.section,
+        record.department_name,
+        record.document_type_name,
+        record.status,
+        record.linked_document_code,
+        record.linked_filename,
+      ]
+        .filter(Boolean)
+        .some((value) =>
+          String(value)
+            .toLowerCase()
+            .includes(query)
+        );
+    });
   const loadData = async () => {
     try {
       setLoading(true);
@@ -261,27 +459,100 @@ export default function Home() {
    * =============================================================
    * ACCESSIBLE MODAL BEHAVIOR
    * =============================================================
+   *
+   * Handles:
+   * - Focus capture when a modal opens
+   * - Focus restoration when it closes
+   * - Keyboard focus trapping
+   * - Escape-to-close
+   * - Body scroll locking
+   * - Background inert behavior
+   *
+   * The effect intentionally does NOT depend on `uploading`.
+   * Upload state changes must not restart the modal lifecycle.
    */
 
   useEffect(() => {
     const modalIsOpen =
       showMetadataModal || showUploadModal;
 
+    const appContent =
+      appContentRef.current as
+        | (HTMLDivElement & {
+            inert: boolean;
+          })
+        | null;
+
     if (!modalIsOpen) {
+      if (appContent) {
+        appContent.inert = false;
+        appContent.removeAttribute(
+          "aria-hidden"
+        );
+      }
+
+      if (bodyScrollLockActiveRef.current) {
+        document.body.style.overflow =
+          previousBodyOverflowRef.current;
+
+        previousBodyOverflowRef.current =
+          "";
+
+        bodyScrollLockActiveRef.current =
+          false;
+      }
+
+      if (
+        previousFocusedElementRef.current &&
+        document.contains(
+          previousFocusedElementRef.current
+        )
+      ) {
+        const elementToRestore =
+          previousFocusedElementRef.current;
+
+        previousFocusedElementRef.current =
+          null;
+
+        window.requestAnimationFrame(() => {
+          elementToRestore.focus();
+        });
+      } else {
+        previousFocusedElementRef.current =
+          null;
+      }
+
       return;
     }
 
-    const previouslyFocusedElement =
-      document.activeElement as HTMLElement | null;
+    if (
+      !previousFocusedElementRef.current
+    ) {
+      const activeElement =
+        document.activeElement;
 
-    const previousBodyOverflow =
-      document.body.style.overflow;
+      if (
+        activeElement instanceof HTMLElement
+      ) {
+        previousFocusedElementRef.current =
+          activeElement;
+      }
+    }
 
-    document.body.style.overflow = "hidden";
+    if (!bodyScrollLockActiveRef.current) {
+      previousBodyOverflowRef.current =
+        document.body.style.overflow;
 
-    if (appContentRef.current) {
-      appContentRef.current.inert = true;
-      appContentRef.current.setAttribute(
+      bodyScrollLockActiveRef.current =
+        true;
+    }
+
+    document.body.style.overflow =
+      "hidden";
+
+    if (appContent) {
+      appContent.inert = true;
+      appContent.setAttribute(
         "aria-hidden",
         "true"
       );
@@ -298,14 +569,17 @@ export default function Home() {
       if (event.key === "Escape") {
         event.preventDefault();
 
-        if (uploading) {
+        if (
+          showUploadModal &&
+          uploadingRef.current
+        ) {
           return;
         }
 
         if (showUploadModal) {
           closeUploadModal();
         } else if (showMetadataModal) {
-          setShowMetadataModal(false);
+          closeMetadataModal();
         }
 
         return;
@@ -315,39 +589,65 @@ export default function Home() {
         return;
       }
 
-      const modal = modalRef.current;
+      const modal =
+        modalRef.current;
 
       if (!modal) {
         return;
       }
 
       const focusableElements =
-        modal.querySelectorAll<HTMLElement>(
-          [
-            'a[href]',
-            'button:not([disabled])',
-            'input:not([disabled])',
-            'select:not([disabled])',
-            'textarea:not([disabled])',
-            '[tabindex]:not([tabindex="-1"])',
-          ].join(",")
-        );
-
-      const visibleFocusableElements =
-        Array.from(focusableElements).filter(
+        Array.from(
+          modal.querySelectorAll<HTMLElement>(
+            [
+              'button:not([disabled])',
+              'a[href]',
+              'input:not([disabled])',
+              'select:not([disabled])',
+              'textarea:not([disabled])',
+              '[tabindex]:not([tabindex="-1"])',
+            ].join(",")
+          )
+        ).filter(
           (element) => {
+            if (
+              element.hasAttribute(
+                "disabled"
+              )
+            ) {
+              return false;
+            }
+
+            if (
+              element.getAttribute(
+                "aria-hidden"
+              ) === "true"
+            ) {
+              return false;
+            }
+
+            if (
+              element.tabIndex === -1
+            ) {
+              return false;
+            }
+
             const style =
-              window.getComputedStyle(element);
+              window.getComputedStyle(
+                element
+              );
 
             return (
-              style.display !== "none" &&
-              style.visibility !== "hidden"
+              style.display !==
+                "none" &&
+              style.visibility !==
+                "hidden"
             );
           }
         );
 
       if (
-        visibleFocusableElements.length === 0
+        focusableElements.length === 0
       ) {
         event.preventDefault();
         modal.focus();
@@ -355,22 +655,24 @@ export default function Home() {
       }
 
       const firstElement =
-        visibleFocusableElements[0];
+        focusableElements[0];
 
       const lastElement =
-        visibleFocusableElements[
-          visibleFocusableElements.length - 1
+        focusableElements[
+          focusableElements.length - 1
         ];
 
       if (
         event.shiftKey &&
-        document.activeElement === firstElement
+        document.activeElement ===
+          firstElement
       ) {
         event.preventDefault();
         lastElement.focus();
       } else if (
         !event.shiftKey &&
-        document.activeElement === lastElement
+        document.activeElement ===
+          lastElement
       ) {
         event.preventDefault();
         firstElement.focus();
@@ -392,32 +694,52 @@ export default function Home() {
         handleKeyDown
       );
 
-      document.body.style.overflow =
-        previousBodyOverflow;
+      if (bodyScrollLockActiveRef.current) {
+        document.body.style.overflow =
+          previousBodyOverflowRef.current;
 
-      if (appContentRef.current) {
-        appContentRef.current.inert = false;
-        appContentRef.current.removeAttribute(
+        previousBodyOverflowRef.current =
+          "";
+
+        bodyScrollLockActiveRef.current =
+          false;
+      }
+
+      if (appContent) {
+        appContent.inert = false;
+        appContent.removeAttribute(
           "aria-hidden"
         );
       }
-
-      window.requestAnimationFrame(() => {
-        if (
-          previouslyFocusedElement &&
-          document.contains(
-            previouslyFocusedElement
-          )
-        ) {
-          previouslyFocusedElement.focus();
-        }
-      });
     };
   }, [
     showMetadataModal,
     showUploadModal,
-    uploading,
   ]);
+
+  /*
+   * =============================================================
+   * MODAL CLOSE HELPERS
+   * =============================================================
+   */
+
+  const closeMetadataModal = () => {
+    setShowMetadataModal(false);
+  };
+
+  const closeUploadModal = () => {
+    if (uploading) {
+      return;
+    }
+
+    setShowUploadModal(false);
+    setSelectedFile(null);
+    setUploadError("");
+    setUploadedDocument(null);
+    setUploadedAppraisal(null);
+    setReviewingDecision(false);
+    setReviewError("");
+  };
 
   /*
    * =============================================================
@@ -436,25 +758,36 @@ export default function Home() {
         {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify({
             referenceCode:
               form.referenceCode.trim(),
             personName:
-              form.personName.trim() || null,
+              form.personName.trim() ||
+              null,
             title:
-              form.title.trim() || null,
+              form.title.trim() ||
+              null,
             departmentId:
-              form.departmentId || null,
+              form.departmentId ||
+              null,
             documentTypeId:
-              form.documentTypeId || null,
+              form.documentTypeId ||
+              null,
             year:
-              form.year || null,
+              form.year ||
+              null,
             documentDate:
-              form.documentDate || null,
-            description:
-              form.description.trim() || null,
+          form.documentDate ||
+          null,
+        section:
+          form.section.trim() ||
+          null,
+        description:
+          form.description.trim() ||
+          null,
           }),
         }
       );
@@ -472,8 +805,10 @@ export default function Home() {
         );
       }
 
-      setShowMetadataModal(false);
-      setForm({ ...EMPTY_FORM });
+      closeMetadataModal();
+      setForm({
+        ...EMPTY_FORM,
+      });
 
       await loadData();
     } catch (error) {
@@ -495,7 +830,8 @@ export default function Home() {
     event: ChangeEvent<HTMLInputElement>
   ) => {
     const file =
-      event.target.files?.[0] ?? null;
+      event.target.files?.[0] ??
+      null;
 
     setUploadError("");
     setUploadedDocument(null);
@@ -517,7 +853,9 @@ export default function Home() {
         .pop();
 
     if (
-      !allowedTypes.includes(file.type) &&
+      !allowedTypes.includes(
+        file.type
+      ) &&
       extension !== "pdf" &&
       extension !== "docx"
     ) {
@@ -555,6 +893,9 @@ export default function Home() {
       setUploading(true);
       setUploadError("");
       setUploadedDocument(null);
+      setUploadedAppraisal(null);
+      setReviewingDecision(false);
+      setReviewError("");
 
       const formData =
         new FormData();
@@ -588,7 +929,8 @@ export default function Home() {
 
       if (
         !data.document ||
-        typeof data.document !== "object"
+        typeof data.document !==
+          "object"
       ) {
         throw new Error(
           "Document uploaded, but the API returned an invalid document response."
@@ -598,6 +940,60 @@ export default function Home() {
       setUploadedDocument(
         data.document as UploadedDocument
       );
+
+      if (
+        data.appraisal &&
+        typeof data.appraisal === "object"
+      ) {
+        setUploadedAppraisal(
+          data.appraisal as UploadedAppraisal
+        );
+
+        setAppraisalMetadataForm({
+          referenceCode:
+            data.appraisal?.metadata?.reference_code ??
+            data.metadata?.reference_code ??
+            "",
+          title:
+            data.appraisal?.metadata?.title ??
+            data.metadata?.title ??
+            "",
+          documentDate:
+            data.appraisal?.metadata?.document_date ??
+            data.metadata?.document_date ??
+            "",
+          year:
+            data.appraisal?.metadata?.year != null
+              ? String(data.appraisal.metadata.year)
+              : data.metadata?.year != null
+                ? String(data.metadata.year)
+                : "",
+          personName:
+            data.appraisal?.metadata?.person_name ??
+            data.metadata?.person_name ??
+            "",
+          departmentId:
+            data.appraisal?.metadata?.department_id != null
+              ? String(data.appraisal.metadata.department_id)
+              : "",
+          documentTypeId:
+            data.appraisal?.metadata?.document_type_id != null
+              ? String(data.appraisal.metadata.document_type_id)
+              : "",
+          section:
+            data.appraisal?.metadata?.section ??
+            data.metadata?.section ??
+            "",
+          description:
+            data.appraisal?.metadata?.description ??
+            data.metadata?.description ??
+            "",
+        });
+      } else {
+        setUploadedAppraisal(null);
+      }
+
+      setReviewError("");
 
       setSelectedFile(null);
 
@@ -624,223 +1020,172 @@ export default function Home() {
 
   /*
    * =============================================================
-   * CLOSE UPLOAD MODAL
+   * APPRAISAL REVIEW
    * =============================================================
    */
 
-  const closeUploadModal = () => {
-    if (uploading) {
+  const handleAppraisalReview = async (
+  decision: "APPROVE" | "REJECT"
+) => {
+  if (!uploadedDocument?.id || !uploadedAppraisal) return;
+
+  if (
+    decision === "APPROVE" &&
+    !uploadedAppraisal.metadataRecordId
+  ) {
+    setReviewError(
+      "There is no metadata record available to approve."
+    );
+    return;
+  }
+
+  try {
+    setReviewingDecision(true);
+    setReviewError("");
+
+    const response = await fetch(
+      `${API_URL}/api/documents/${uploadedDocument.id}/review`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          decision,
+          metadataRecordId:
+            uploadedAppraisal.metadataRecordId,
+          metadata: {
+            referenceCode:
+              appraisalMetadataForm.referenceCode.trim() || null,
+            title:
+              appraisalMetadataForm.title.trim() || null,
+            documentDate:
+              appraisalMetadataForm.documentDate || null,
+            year:
+              appraisalMetadataForm.year.trim() || null,
+            personName:
+              appraisalMetadataForm.personName.trim() || null,
+            departmentId:
+              appraisalMetadataForm.departmentId || null,
+            documentTypeId:
+              appraisalMetadataForm.documentTypeId || null,
+            section:
+              appraisalMetadataForm.section.trim() || null,
+            description:
+              appraisalMetadataForm.description.trim() || null,
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error ||
+          data.message ||
+          data.details ||
+          "Unable to process the appraisal decision."
+      );
+    }
+
+    if (data.document) {
+      setUploadedDocument(data.document);
+    }
+
+    await loadData();
+
+    if (decision === "REJECT" && data.metadata) {
+      setUploadedAppraisal((current) => ({
+        ...(current || {
+          matchType: "NO_MATCH",
+          confidence: 0,
+          metadataRecordId: null,
+          matchingFields: [],
+          conflictingFields: [],
+          decision: "",
+        }),
+        metadataRecordId: Number(data.metadata.id),
+        decision: "NEW_METADATA_CREATED",
+        matchType: "NO_MATCH",
+        confidence: 100,
+        matchingFields: [
+          "Metadata created from reviewed document",
+        ],
+        conflictingFields: [],
+        match: data.match
+          ? {
+              ...data.match,
+              metadata_record_id: data.metadata.id,
+              match_type: "HUMAN_CREATED_METADATA",
+              confidence: 100,
+              decision: "LINKED",
+            }
+          : undefined,
+      }));
+
+      setReviewError("");
       return;
     }
 
-    setShowUploadModal(false);
-    setSelectedFile(null);
-    setUploadError("");
-    setUploadedDocument(null);
-  };
-
-  /*
-   * =============================================================
-   * FORMATTING
-   * =============================================================
-   */
-
-  const formatUploadFieldLabel = (
-    key: string
-  ) => {
-    return key
-      .replace(
-        /([a-z])([A-Z])/g,
-        "$1 $2"
-      )
-      .replace(/_/g, " ")
-      .replace(
-        /\b\w/g,
-        (letter) =>
-          letter.toUpperCase()
+    if (decision === "APPROVE") {
+      setUploadedAppraisal((current) =>
+        current
+          ? {
+              ...current,
+              decision: "LINKED",
+              metadataRecordId:
+                data.metadata?.id ??
+                current.metadataRecordId,
+            }
+          : current
       );
-  };
 
-  const formatDate = (
-    value: string | null
-  ) => {
-    if (!value) {
-      return "—";
+      setReviewError("");
     }
-
-    const date =
-      new Date(value);
-
-    if (
-      Number.isNaN(
-        date.getTime()
-      )
-    ) {
-      return value;
-    }
-
-    return date.toLocaleDateString(
-      "en-GB",
-      {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone:
-          "Africa/Nairobi",
-      }
+  } catch (error) {
+    setReviewError(
+      error instanceof Error
+        ? error.message
+        : "Unable to process the appraisal decision."
     );
-  };
-
-  const formatFileSize = (
-    bytes: number | undefined
-  ) => {
-    if (
-      bytes === undefined ||
-      bytes === null ||
-      bytes <= 0
-    ) {
-      return "0 KB";
-    }
-
-    if (
-      bytes <
-      1024 * 1024
-    ) {
-      return `${Math.round(
-        bytes / 1024
-      )} KB`;
-    }
-
-    return `${(
-      bytes /
-      (1024 * 1024)
-    ).toFixed(2)} MB`;
-  };
-
-  const formatUploadFieldValue = (
-    key: string,
-    value: unknown
-  ): string => {
-    if (
-      value === null ||
-      value === undefined ||
-      value === ""
-    ) {
-      return "—";
-    }
-
-    if (
-      key === "file_size" &&
-      typeof value === "number"
-    ) {
-      return formatFileSize(value);
-    }
-
-    if (
-      key.includes("date") ||
-      key === "created_at" ||
-      key === "updated_at" ||
-      key === "upload_date"
-    ) {
-      if (
-        typeof value === "string"
-      ) {
-        return formatDate(value);
-      }
-    }
-
-    if (
-      typeof value === "boolean"
-    ) {
-      return value
-        ? "Yes"
-        : "No";
-    }
-
-    if (
-      typeof value === "object"
-    ) {
-      try {
-        return JSON.stringify(
-          value,
-          null,
-          2
-        );
-      } catch {
-        return String(value);
-      }
-    }
-
-    return String(value);
-  };
-
-  const getStatValue = (
-    key: string
-  ) => {
-    if (
-      loading ||
-      !statistics
-    ) {
-      return "—";
-    }
-
-    return (
-      statistics[
-        key as keyof Statistics
-      ] ?? "0"
-    );
-  };
-
-  /*
-   * =============================================================
-   * FILTERED METADATA
-   * =============================================================
-   */
-
-  const normalizedSearchTerm =
-    searchTerm
-      .trim()
-      .toLowerCase();
-
-  const filteredMetadata =
-    metadata.filter(
-      (record) => {
-        if (!normalizedSearchTerm) {
-          return true;
-        }
-
-        return [
-          record.reference_code,
-          record.title,
-          record.person_name,
-          record.department_name,
-          record.document_type_name,
-          record.linked_document_code,
-          record.linked_filename,
-          record.status,
-        ]
-          .filter(
-            (
-              value
-            ): value is string =>
-              Boolean(value)
-          )
-          .some((value) =>
-            value
-              .toLowerCase()
-              .includes(
-                normalizedSearchTerm
-              )
-          );
-      }
-    );
-
+  } finally {
+    setReviewingDecision(false);
+  }
+};
   const uploadFieldEntries =
     uploadedDocument
       ? Object.entries(
           uploadedDocument
         )
       : [];
+
+  const matchedMetadata =
+    uploadedAppraisal?.metadataRecordId
+      ? metadata.find(
+          (record) =>
+            Number(record.id) ===
+            Number(
+              uploadedAppraisal.metadataRecordId
+            )
+        ) ?? null
+      : null;
+
+  const appraisalDecisionLabel =
+    uploadedAppraisal?.decision ===
+    "LINKED"
+      ? "LINKED"
+      : uploadedAppraisal?.decision ===
+        "NEW_METADATA_CREATED"
+        ? "NEW METADATA CREATED & LINKED"
+        : uploadedAppraisal?.decision ===
+          "REJECT"
+          ? "REJECTED"
+          : "REVIEW REQUIRED";
+
+  const appraisalIsLinked =
+    uploadedAppraisal?.decision ===
+    "LINKED";
 
   return (
     <main className="min-h-screen bg-[#f5f7fa] text-slate-900">
@@ -855,7 +1200,10 @@ export default function Home() {
         <aside className="hidden w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
           <div className="border-b border-slate-200 px-6 py-6">
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-lg font-bold text-white">
+              <div
+                aria-hidden="true"
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-lg font-bold text-white"
+              >
                 DA
               </div>
 
@@ -877,7 +1225,8 @@ export default function Home() {
           >
             <NavItem
               active={
-                activePage === "Dashboard"
+                activePage ===
+                "Dashboard"
               }
               icon="⌂"
               label="Dashboard"
@@ -890,7 +1239,8 @@ export default function Home() {
 
             <NavItem
               active={
-                activePage === "Documents"
+                activePage ===
+                "Documents"
               }
               icon="▣"
               label="Documents"
@@ -917,7 +1267,8 @@ export default function Home() {
 
             <NavItem
               active={
-                activePage === "Search"
+                activePage ===
+                "Search"
               }
               icon="⌕"
               label="Search"
@@ -930,7 +1281,8 @@ export default function Home() {
 
             <NavItem
               active={
-                activePage === "Departments"
+                activePage ===
+                "Departments"
               }
               icon="▤"
               label="Departments"
@@ -943,7 +1295,8 @@ export default function Home() {
 
             <NavItem
               active={
-                activePage === "Settings"
+                activePage ===
+                "Settings"
               }
               icon="⚙"
               label="Settings"
@@ -1391,7 +1744,11 @@ export default function Home() {
 
                 <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   {loading ? (
-                    <div className="p-10 text-center text-sm text-slate-500">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="p-10 text-center text-sm text-slate-500"
+                    >
                       Loading metadata registry...
                     </div>
                   ) : filteredMetadata.length ===
@@ -1450,7 +1807,10 @@ export default function Home() {
                               Type
                             </th>
 
-                            <th className="px-5 py-4 font-semibold">
+                                                        <th className="px-5 py-4 font-semibold">
+                              Section
+                            </th>
+<th className="px-5 py-4 font-semibold">
                               Date
                             </th>
 
@@ -1513,6 +1873,9 @@ export default function Home() {
                                     record.document_type_name ||
                                     "—"
                                   }
+                                </td>
+                                <td className="px-5 py-5 text-sm text-slate-600">
+                                  {record.section || "—"}
                                 </td>
 
                                 <td className="px-5 py-5">
@@ -1586,7 +1949,11 @@ export default function Home() {
                   </div>
 
                   {loading ? (
-                    <div className="p-10 text-center text-sm text-slate-500">
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="p-10 text-center text-sm text-slate-500"
+                    >
                       Loading documents...
                     </div>
                   ) : documents.length ===
@@ -1759,7 +2126,11 @@ export default function Home() {
                       Search Results
                     </h3>
 
-                    <p className="mt-1 text-sm text-slate-500">
+                    <p
+                      role="status"
+                      aria-live="polite"
+                      className="mt-1 text-sm text-slate-500"
+                    >
                       {searchTerm
                         ? `${filteredMetadata.length} matching metadata record(s)`
                         : "Enter a search term to explore the registry."}
@@ -2018,14 +2389,6 @@ export default function Home() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="presentation"
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              setShowMetadataModal(false);
-            }
-          }}
         >
           <div
             ref={modalRef}
@@ -2064,10 +2427,8 @@ export default function Home() {
                     modalCloseButtonRef
                   }
                   type="button"
-                  onClick={() =>
-                    setShowMetadataModal(
-                      false
-                    )
+                  onClick={
+                    closeMetadataModal
                   }
                   aria-label="Close metadata registration dialog"
                   className="ml-4 rounded-lg p-2 text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
@@ -2087,6 +2448,7 @@ export default function Home() {
             >
               <div className="grid gap-5 md:grid-cols-2">
                 <FormField
+                  id="metadata-reference-code"
                   label="Reference Code *"
                   value={
                     form.referenceCode
@@ -2103,6 +2465,7 @@ export default function Home() {
                 />
 
                 <FormField
+                  id="metadata-person-name"
                   label="Person Name"
                   value={
                     form.personName
@@ -2119,6 +2482,7 @@ export default function Home() {
               </div>
 
               <FormField
+                id="metadata-title"
                 label="Document Title"
                 value={
                   form.title
@@ -2134,11 +2498,15 @@ export default function Home() {
 
               <div className="grid gap-5 md:grid-cols-2">
                 <div>
-                  <label className="mb-2 block text-sm font-semibold">
+                  <label
+                    htmlFor="metadata-department"
+                    className="mb-2 block text-sm font-semibold"
+                  >
                     Department
                   </label>
 
                   <select
+                    id="metadata-department"
                     value={
                       form.departmentId
                     }
@@ -2180,11 +2548,15 @@ export default function Home() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-semibold">
+                  <label
+                    htmlFor="metadata-document-type"
+                    className="mb-2 block text-sm font-semibold"
+                  >
                     Document Type
                   </label>
 
                   <select
+                    id="metadata-document-type"
                     value={
                       form.documentTypeId
                     }
@@ -2226,6 +2598,7 @@ export default function Home() {
 
               <div className="grid gap-5 md:grid-cols-2">
                 <FormField
+                  id="metadata-year"
                   label="Document Year"
                   type="number"
                   value={
@@ -2241,11 +2614,15 @@ export default function Home() {
                 />
 
                 <div>
-                  <label className="mb-2 block text-sm font-semibold">
+                  <label
+                    htmlFor="metadata-document-date"
+                    className="mb-2 block text-sm font-semibold"
+                  >
                     Document Date
                   </label>
 
                   <input
+                    id="metadata-document-date"
                     type="date"
                     value={
                       form.documentDate
@@ -2263,14 +2640,36 @@ export default function Home() {
                     className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   />
                 </div>
+
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-700">
+                    Section
+                  </span>
+                  <input
+                    type="text"
+                    value={form.section}
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        section: event.target.value,
+                      }))
+                    }
+                    placeholder="e.g. Operations, Finance, Procurement"
+                    className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
               </div>
 
               <div>
-                <label className="mb-2 block text-sm font-semibold">
+                <label
+                  htmlFor="metadata-description"
+                  className="mb-2 block text-sm font-semibold"
+                >
                   Description
                 </label>
 
                 <textarea
+                  id="metadata-description"
                   rows={4}
                   value={
                     form.description
@@ -2291,10 +2690,8 @@ export default function Home() {
               <div className="flex justify-end gap-3 border-t border-slate-200 pt-5">
                 <button
                   type="button"
-                  onClick={() =>
-                    setShowMetadataModal(
-                      false
-                    )
+                  onClick={
+                    closeMetadataModal
                   }
                   className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
                 >
@@ -2321,16 +2718,6 @@ export default function Home() {
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="presentation"
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              if (!uploading) {
-                closeUploadModal();
-              }
-            }
-          }}
         >
           <div
             ref={modalRef}
@@ -2339,7 +2726,7 @@ export default function Home() {
             aria-labelledby="upload-modal-title"
             aria-describedby="upload-modal-description"
             tabIndex={-1}
-            className="max-h-[90vh] w-full max-w-xl overflow-hidden rounded-2xl bg-white shadow-2xl outline-none"
+            className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl outline-none"
           >
             <div className="border-b border-slate-200 px-6 py-5">
               <div className="flex items-center justify-between">
@@ -2384,7 +2771,7 @@ export default function Home() {
 
             <form
               onSubmit={handleUpload}
-              className="min-h-0 overflow-hidden p-6"
+              className="min-h-0 flex-1 overflow-y-auto p-6"
             >
               {!uploadedDocument ? (
                 <>
@@ -2423,7 +2810,11 @@ export default function Home() {
                   </label>
 
                   {selectedFile && (
-                    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <div
+                      className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4"
+                      role="status"
+                      aria-live="polite"
+                    >
                       <div className="flex items-center gap-3">
                         <div
                           aria-hidden="true"
@@ -2452,6 +2843,7 @@ export default function Home() {
                   {uploadError && (
                     <div
                       role="alert"
+                      aria-live="assertive"
                       className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
                     >
                       {
@@ -2480,6 +2872,9 @@ export default function Home() {
                         !selectedFile ||
                         uploading
                       }
+                      aria-busy={
+                        uploading
+                      }
                       className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {uploading
@@ -2487,9 +2882,23 @@ export default function Home() {
                         : "Upload Document"}
                     </button>
                   </div>
+
+                  {uploading && (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className="mt-4 text-center text-sm text-slate-500"
+                    >
+                      Uploading and processing the document...
+                    </div>
+                  )}
                 </>
               ) : (
-                <div className="flex max-h-[75vh] min-h-0 flex-col py-6">
+                <div
+                  className="flex max-h-[75vh] min-h-0 flex-col py-6"
+                  role="status"
+                  aria-live="polite"
+                >
                   <div className="shrink-0 text-center">
                     <div
                       aria-hidden="true"
@@ -2600,26 +3009,445 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="mt-4 shrink-0 rounded-xl border border-amber-200 bg-amber-50 p-3 text-left text-xs leading-5 text-amber-800">
+                  {uploadedAppraisal && (
+                    <div className="mt-4 shrink-0 rounded-2xl border border-slate-200 bg-white text-left shadow-sm">
+                      <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                              AI Appraisal
+                            </p>
+
+                            <h4 className="mt-1 text-lg font-bold text-slate-900">
+                              {uploadedAppraisal.matchType ===
+                              "NO_MATCH"
+                                ? "No metadata match found"
+                                : "Likely metadata match detected"}
+                            </h4>
+                          </div>
+
+                          <div className="rounded-xl bg-white px-4 py-3 text-center shadow-sm">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                              Confidence
+                            </p>
+
+                            <p className="mt-1 text-2xl font-bold text-blue-600">
+                              {uploadedAppraisal.confidence}%
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white p-5">
+                        <div className="mb-4">
+                          <h3 className="text-base font-semibold text-slate-900">
+                            Review & Edit Metadata
+                          </h3>
+                          <p className="mt-1 text-sm text-slate-500">
+                            Review the extracted metadata before linking this document.
+                            You may change, clear, or leave any field blank.
+                          </p>
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Reference Code
+                            </span>
+                            <input
+                              type="text"
+                              value={appraisalMetadataForm.referenceCode}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  referenceCode: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Title
+                            </span>
+                            <input
+                              type="text"
+                              value={appraisalMetadataForm.title}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  title: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Document Date
+                            </span>
+                            <input
+                              type="date"
+                              value={appraisalMetadataForm.documentDate}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  documentDate: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Year
+                            </span>
+                            <input
+                              type="number"
+                              value={appraisalMetadataForm.year}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  year: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Person Name
+                            </span>
+                            <input
+                              type="text"
+                              value={appraisalMetadataForm.personName}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  personName: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Department
+                            </span>
+                            <select
+                              value={appraisalMetadataForm.departmentId}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  departmentId: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            >
+                              <option value="">None</option>
+                              {departments.map((department) => (
+                                <option
+                                  key={department.id}
+                                  value={department.id}
+                                >
+                                  {department.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Document Type
+                            </span>
+                            <select
+                              value={appraisalMetadataForm.documentTypeId}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  documentTypeId: event.target.value,
+                                }))
+                              }
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            >
+                              <option value="">None</option>
+                              {documentTypes.map((documentType) => (
+                                <option
+                                  key={documentType.id}
+                                  value={documentType.id}
+                                >
+                                  {documentType.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Section
+                            </span>
+                            <input
+                              type="text"
+                              value={appraisalMetadataForm.section}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  section: event.target.value,
+                                }))
+                              }
+                              placeholder="e.g. Operations, Finance, Procurement"
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+
+                          <label className="block md:col-span-2">
+                            <span className="mb-1 block text-sm font-medium text-slate-700">
+                              Description
+                            </span>
+                            <textarea
+                              value={appraisalMetadataForm.description}
+                              onChange={(event) =>
+                                setAppraisalMetadataForm((current) => ({
+                                  ...current,
+                                  description: event.target.value,
+                                }))
+                              }
+                              rows={4}
+                              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                      {matchedMetadata && (
+                        <div className="border-b border-slate-100 px-5 py-4">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                            Likely Metadata Record
+                          </p>
+
+                          <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 p-4">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="text-lg font-bold text-blue-700">
+                                  {matchedMetadata.reference_code}
+                                </p>
+
+                                <p className="mt-1 font-semibold text-slate-900">
+                                  {matchedMetadata.title ||
+                                    "Untitled document"}
+                                </p>
+
+                                {matchedMetadata.person_name && (
+                                  <p className="mt-1 text-sm text-slate-600">
+                                    {matchedMetadata.person_name}
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="text-left text-xs text-slate-500 sm:text-right">
+                                <p>
+                                  {matchedMetadata.department_name ||
+                                    "No department"}
+                                </p>
+
+                                <p className="mt-1">
+                                  {matchedMetadata.document_type_name ||
+                                    "No document type"}
+                                </p>
+
+                                {matchedMetadata.year && (
+                                  <p className="mt-1">
+                                    {matchedMetadata.year}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {uploadedAppraisal.matchingFields.length > 0 && (
+                        <div className="border-b border-slate-100 px-5 py-4">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                            Matching Information
+                          </p>
+
+                          <div className="mt-3 space-y-2">
+                            {uploadedAppraisal.matchingFields.map(
+                              (field) => (
+                                <div
+                                  key={field}
+                                  className="flex items-center gap-2 text-sm text-slate-700"
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700"
+                                  >
+                                    ✓
+                                  </span>
+
+                                  <span>
+                                    {field}
+                                  </span>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {uploadedAppraisal.conflictingFields.length > 0 && (
+                        <div className="border-b border-slate-100 px-5 py-4">
+                          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                            Conflicting Information
+                          </p>
+
+                          <div className="mt-3 space-y-2">
+                            {uploadedAppraisal.conflictingFields.map(
+                              (field) => (
+                                <div
+                                  key={field}
+                                  className="flex items-center gap-2 text-sm text-amber-800"
+                                >
+                                  <span
+                                    aria-hidden="true"
+                                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold"
+                                  >
+                                    !
+                                  </span>
+
+                                  <span>
+                                    {field}
+                                  </span>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="px-5 py-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                          Decision
+                        </p>
+
+                        <div className="mt-2 flex flex-wrap items-center gap-3">
+                          <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">
+                            {appraisalDecisionLabel}
+                          </span>
+
+                          {appraisalIsLinked && (
+                            <span className="text-sm font-semibold text-emerald-700">
+                              Document linked successfully.
+                            </span>
+                          )}
+                        </div>
+
+                        {!appraisalIsLinked &&
+                          uploadedAppraisal.matchType !==
+                            "NO_MATCH" && (
+                            <p className="mt-3 text-sm leading-6 text-slate-600">
+                              The system found a likely metadata match.
+                              No link has been created automatically.
+                              Please review the recommendation before
+                              changing the record relationship.
+                            </p>
+                          )}
+
+
+
+                        {reviewError && (
+                          <div
+                            role="alert"
+                            aria-live="assertive"
+                            className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+                          >
+                            {reviewError}
+                          </div>
+                        )}
+
+                        {uploadedAppraisal.decision !== "LINKED" &&
+                          uploadedAppraisal.decision !==
+                            "NEW_METADATA_CREATED" && (
+                            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                              {uploadedAppraisal.metadataRecordId && (
+                                <button
+                                  type="button"
+                                  disabled={reviewingDecision}
+                                  onClick={() =>
+                                    void handleAppraisalReview(
+                                      "APPROVE"
+                                    )
+                                  }
+                                  className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {reviewingDecision
+                                    ? "Processing..."
+                                    : "Approve & Link"}
+                                </button>
+                              )}
+
+                              {uploadedAppraisal.metadataRecordId && (
+                                <button
+                                  type="button"
+                                  disabled={reviewingDecision}
+                                  onClick={() =>
+                                    void handleAppraisalReview(
+                                      "REJECT"
+                                    )
+                                  }
+                                  className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Reject Match
+                                </button>
+                              )}
+                            </div>
+                          )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-4 shrink-0 rounded-xl border border-slate-200 bg-slate-50 p-3 text-left text-xs leading-5 text-slate-600">
                     <p>
                       <strong>
-                        Next step:
+                        Records principle:
                       </strong>{" "}
-                      the document is currently unlinked. The intelligent
-                      matching engine will compare its extracted information
-                      against your pre-fed metadata records.
+                      the appraisal engine recommends a relationship; the
+                      human reviewer controls whether the document is linked
+                      to the metadata record.
                     </p>
                   </div>
 
                   <div className="mt-4 flex shrink-0 justify-center">
                     <button
                       type="button"
-                      onClick={
-                        closeUploadModal
-                      }
-                      className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                      disabled={reviewingDecision}
+                      onClick={() => {
+                        if (
+                          uploadedAppraisal?.matchType ===
+                            "NO_MATCH" &&
+                          uploadedAppraisal.decision !==
+                            "NEW_METADATA_CREATED"
+                        ) {
+                          void handleAppraisalReview(
+                            "REJECT"
+                          );
+                          return;
+                        }
+
+                        closeUploadModal();
+                      }}
+                      className="rounded-xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white 
+transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 
+disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Done
+                      {reviewingDecision
+                        ? "Saving..."
+                        : "Done"}
                     </button>
                   </div>
                 </div>
@@ -2651,6 +3479,11 @@ function NavItem({
     <button
       type="button"
       onClick={onClick}
+      aria-current={
+        active
+          ? "page"
+          : undefined
+      }
       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 ${
         active
           ? "bg-slate-900 text-white shadow-sm"
@@ -2798,6 +3631,7 @@ function StatusBadge({
 /* =============================================================== */
 
 function FormField({
+  id,
   label,
   value,
   onChange,
@@ -2805,6 +3639,7 @@ function FormField({
   type = "text",
   required = false,
 }: {
+  id: string;
   label: string;
   value: string;
   onChange: (
@@ -2816,11 +3651,15 @@ function FormField({
 }) {
   return (
     <div>
-      <label className="mb-2 block text-sm font-semibold">
+      <label
+        htmlFor={id}
+        className="mb-2 block text-sm font-semibold"
+      >
         {label}
       </label>
 
       <input
+        id={id}
         required={required}
         type={type}
         value={value}
@@ -2893,3 +3732,20 @@ function SettingRow({
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
