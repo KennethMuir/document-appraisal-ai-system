@@ -1,19 +1,12 @@
 {
   "name": "document-appraisal-ai-system",
-  "version": "0.1.0",
-  "description": "Multi-user Document AI and Records Management System",
-  "main": "index.js",
+  "private": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "npm run dev:web",
-    "dev:web": "npm --prefix apps/web run dev",
+    "dev": "concurrently -n API,WEB -c blue,green \"npm --prefix apps/api run dev\" \"npm --prefix apps/web run dev\"",
     "dev:api": "npm --prefix apps/api run dev",
-    "build": "npm run build:web",
-    "build:web": "npm --prefix apps/web run build"
+    "dev:web": "npm --prefix apps/web run dev"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "private": "true"
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
 }

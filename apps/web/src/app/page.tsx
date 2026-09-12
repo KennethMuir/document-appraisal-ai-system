@@ -84,8 +84,16 @@ type UploadedAppraisal = {
     description?: string | null;
     section?: string | null;
     department_id?: string | number | null;
+    department_name?: string | null;
+    department_code?: string | null;
     document_type_id?: string | number | null;
+    document_type_name?: string | null;
   } | null;
+  metadataConflicts?: Array<{
+    field: string;
+    existingValue: string | number | null;
+    documentValue: string | number | null;
+  }>;
   match?: {
     id?: string | number;
     document_id?: string | number;
@@ -945,47 +953,51 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
         data.appraisal &&
         typeof data.appraisal === "object"
       ) {
-        setUploadedAppraisal(
-          data.appraisal as UploadedAppraisal
-        );
+        const appraisal =
+          data.appraisal as UploadedAppraisal;
+
+        setUploadedAppraisal(appraisal);
+
+        const metadata =
+          appraisal.metadata ?? null;
 
         setAppraisalMetadataForm({
           referenceCode:
-            data.appraisal?.metadata?.reference_code ??
+            metadata?.reference_code ??
             data.metadata?.reference_code ??
             "",
           title:
-            data.appraisal?.metadata?.title ??
+            metadata?.title ??
             data.metadata?.title ??
             "",
           documentDate:
-            data.appraisal?.metadata?.document_date ??
+            metadata?.document_date ??
             data.metadata?.document_date ??
             "",
           year:
-            data.appraisal?.metadata?.year != null
-              ? String(data.appraisal.metadata.year)
+            metadata?.year != null
+              ? String(metadata.year)
               : data.metadata?.year != null
                 ? String(data.metadata.year)
                 : "",
           personName:
-            data.appraisal?.metadata?.person_name ??
+            metadata?.person_name ??
             data.metadata?.person_name ??
             "",
           departmentId:
-            data.appraisal?.metadata?.department_id != null
-              ? String(data.appraisal.metadata.department_id)
+            metadata?.department_id != null
+              ? String(metadata.department_id)
               : "",
           documentTypeId:
-            data.appraisal?.metadata?.document_type_id != null
-              ? String(data.appraisal.metadata.document_type_id)
+            metadata?.document_type_id != null
+              ? String(metadata.document_type_id)
               : "",
           section:
-            data.appraisal?.metadata?.section ??
+            metadata?.section ??
             data.metadata?.section ??
             "",
           description:
-            data.appraisal?.metadata?.description ??
+            metadata?.description ??
             data.metadata?.description ??
             "",
         });
@@ -1122,6 +1134,19 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
               decision: "LINKED",
             }
           : undefined,
+      }));
+
+      /*
+       * The backend may generate a new unique reference
+       * code when the rejected metadata reference already
+       * exists. Reflect that new reference in the editable
+       * appraisal form while preserving every other field.
+       */
+      setAppraisalMetadataForm((current) => ({
+        ...current,
+        referenceCode:
+          data.metadata?.reference_code ??
+          current.referenceCode,
       }));
 
       setReviewError("");
@@ -3306,24 +3331,71 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
                             Conflicting Information
                           </p>
 
-                          <div className="mt-3 space-y-2">
-                            {uploadedAppraisal.conflictingFields.map(
-                              (field) => (
-                                <div
-                                  key={field}
-                                  className="flex items-center gap-2 text-sm text-amber-800"
-                                >
-                                  <span
-                                    aria-hidden="true"
-                                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold"
+                          <div className="mt-3 space-y-3">
+                            {uploadedAppraisal.metadataConflicts &&
+                            uploadedAppraisal.metadataConflicts.length > 0 ? (
+                              uploadedAppraisal.metadataConflicts.map(
+                                (conflict) => (
+                                  <div
+                                    key={conflict.field}
+                                    className="rounded-xl border border-amber-200 bg-amber-50 p-3"
                                   >
-                                    !
-                                  </span>
+                                    <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                                      <span
+                                        aria-hidden="true"
+                                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold"
+                                      >
+                                        !
+                                      </span>
 
-                                  <span>
-                                    {field}
-                                  </span>
-                                </div>
+                                      <span>
+                                        {conflict.field}
+                                      </span>
+                                    </div>
+
+                                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                      <div className="rounded-lg bg-white p-3">
+                                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                          Existing metadata
+                                        </p>
+                                        <p className="mt-1 text-sm text-slate-700">
+                                          {conflict.existingValue ??
+                                            "Blank"}
+                                        </p>
+                                      </div>
+
+                                      <div className="rounded-lg bg-white p-3">
+                                        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                          Document says
+                                        </p>
+                                        <p className="mt-1 text-sm text-slate-700">
+                                          {conflict.documentValue ??
+                                            "Blank"}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )
+                              )
+                            ) : (
+                              uploadedAppraisal.conflictingFields.map(
+                                (field) => (
+                                  <div
+                                    key={field}
+                                    className="flex items-center gap-2 text-sm text-amber-800"
+                                  >
+                                    <span
+                                      aria-hidden="true"
+                                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xs font-bold"
+                                    >
+                                      !
+                                    </span>
+
+                                    <span>
+                                      {field}
+                                    </span>
+                                  </div>
+                                )
                               )
                             )}
                           </div>
@@ -3732,20 +3804,4 @@ function SettingRow({
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
