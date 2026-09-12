@@ -9,6 +9,7 @@ import { Pool, type PoolClient } from "pg";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
 import { ocrPdf } from "./services/ocr.js";
+import { LocalFileStorage } from "./services/storage.js";
 import { randomBytes, createHash, scrypt as scryptCallback, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 
@@ -798,6 +799,11 @@ const temporaryRoot = path.join(
 
 fs.mkdirSync(storageRoot, { recursive: true });
 fs.mkdirSync(temporaryRoot, { recursive: true });
+
+const localFileStorage =
+  new LocalFileStorage(
+    storageRoot
+  );
 
 const upload = multer({
   dest: temporaryRoot,
@@ -3210,6 +3216,24 @@ app.post(
       | string
       | null = null;
 
+    const authenticatedRequest =
+      req as AuthenticatedRequest;
+
+    const ownerUser =
+      authenticatedRequest.authUser;
+
+    if (!ownerUser) {
+      await fs.promises.unlink(
+        temporaryPath
+      ).catch(() => undefined);
+
+      return res.status(401).json({
+        success: false,
+        error:
+          "Authentication required",
+      });
+    }
+
     try {
       const originalName =
         req.file.originalname;
@@ -3284,16 +3308,18 @@ app.post(
         const documentCode =
           `DOC-${uploadNumber}`;
 
-        targetPath =
-          path.join(
-            storageRoot,
-            `${documentCode}${extension}`
+
+        const storedFilename =
+          `${documentCode}${extension}`;
+
+        const storedDocument =
+          await localFileStorage.store(
+            temporaryPath,
+            storedFilename
           );
 
-        await fs.promises.rename(
-          temporaryPath,
-          targetPath
-        );
+        targetPath =
+          storedDocument.localPath;
 
         const extracted =
           await extractDocumentContent(
@@ -3315,7 +3341,8 @@ app.post(
                 person_name,
                 file_type,
                 file_size,
-                status
+                status,
+                owner_user_id
               )
               VALUES (
                 $1,
@@ -3327,7 +3354,8 @@ app.post(
                 $7,
                 $8,
                 $9,
-                $10
+                $10,
+                $11
               )
               RETURNING *
             `,
@@ -3344,6 +3372,7 @@ app.post(
                 .toUpperCase(),
               req.file.size,
               "UNLINKED",
+              ownerUser.id,
             ]
           );
 
@@ -3360,6 +3389,8 @@ app.post(
               original_filename,
               stored_filename,
               storage_path,
+              storage_provider,
+              storage_reference,
               mime_type,
               file_size
             )
@@ -3369,7 +3400,9 @@ app.post(
               $3,
               $4,
               $5,
-              $6
+              $6,
+              $7,
+              $8
             )
           `,
           [
@@ -3377,6 +3410,8 @@ app.post(
             originalName,
             `${documentCode}${extension}`,
             targetPath,
+            storedDocument.provider,
+            storedDocument.reference,
             req.file.mimetype ||
               null,
             req.file.size,
@@ -5283,13 +5318,17 @@ app.get(
         await pool.query(
           `
             SELECT
-              original_filename,
-              stored_filename,
-              storage_path,
-              mime_type
-            FROM document_files
-            WHERE document_id = $1
-            ORDER BY uploaded_at DESC
+              df.original_filename,
+              df.stored_filename,
+              df.storage_provider,
+              df.storage_reference,
+              df.mime_type,
+              d.owner_user_id
+            FROM document_files df
+            INNER JOIN documents d
+              ON d.id = df.document_id
+            WHERE df.document_id = $1
+            ORDER BY df.uploaded_at DESC
             LIMIT 1
           `,
           [documentId]
@@ -5308,17 +5347,85 @@ app.get(
       const file =
         result.rows[0];
 
+      const authenticatedRequest =
+        req as AuthenticatedRequest;
+
+      const authUser =
+        authenticatedRequest.authUser;
+
+      if (!authUser) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Authentication required",
+        });
+      }
+
+      const isOwner =
+        Number(file.owner_user_id) ===
+        authUser.id;
+
+      const isPrivileged =
+        authUser.role === "ADMIN" ||
+        authUser.role === "APPRAISER";
+
       if (
-        !fs.existsSync(
-          file.storage_path
-        )
+        !isOwner &&
+        !isPrivileged
       ) {
+        return res.status(403).json({
+          success: false,
+          error:
+            "You do not have access to this document",
+        });
+      }
+
+      const storageProvider =
+        String(
+          file.storage_provider || ""
+        ).toUpperCase();
+
+      if (
+        storageProvider !==
+        "LOCAL"
+      ) {
+        return res.status(500).json({
+          success: false,
+          error:
+            `Unsupported document storage provider: ${storageProvider || "UNKNOWN"}`,
+        });
+      }
+
+      const storageReference =
+        String(
+          file.storage_reference || ""
+        ).trim();
+
+      if (!storageReference) {
+        return res.status(500).json({
+          success: false,
+          error:
+            "Document storage reference is missing",
+        });
+      }
+
+      const exists =
+        await localFileStorage.exists(
+          storageReference
+        );
+
+      if (!exists) {
         return res.status(404).json({
           success: false,
           error:
             "Stored document file is missing",
         });
       }
+
+      const localPath =
+        localFileStorage.resolve(
+          storageReference
+        );
 
       res.setHeader(
         "Content-Type",
@@ -5334,9 +5441,7 @@ app.get(
       );
 
       return res.sendFile(
-        path.resolve(
-          file.storage_path
-        )
+        localPath
       );
     } catch (error) {
       console.error(
