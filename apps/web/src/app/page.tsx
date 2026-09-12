@@ -212,6 +212,17 @@ export default function Home() {
 
   const [authError, setAuthError] =
     useState("");
+
+  const canManageDocuments =
+    authUser?.role === "ADMIN" ||
+    authUser?.role === "APPRAISER";
+
+  const canManageMetadata =
+    authUser?.role === "ADMIN" ||
+    authUser?.role === "APPRAISER";
+
+  const canManageDepartments =
+    authUser?.role === "ADMIN";
   const [statistics, setStatistics] =
     useState<Statistics | null>(null);
 
@@ -264,6 +275,10 @@ export default function Home() {
   };
 
   const openAddDepartmentModal = () => {
+    if (!canManageDepartments) {
+      return
+    }
+
     setDepartmentEditingId(null);
 
     setDepartmentForm({
@@ -279,6 +294,10 @@ export default function Home() {
   const openEditDepartmentModal = (
     department: Department
   ) => {
+    if (!canManageDepartments) {
+      return
+    }
+
     setDepartmentEditingId(
       department.id
     );
@@ -304,6 +323,10 @@ export default function Home() {
   };
 
   const saveDepartment = async () => {
+    if (!canManageDepartments) {
+      return
+    }
+
     const name =
       departmentForm.name.trim();
 
@@ -335,6 +358,7 @@ export default function Home() {
       const response =
         await fetch(endpoint, {
           method: "POST",
+          credentials: "include",
           headers: {
             "Content-Type":
               "application/json",
@@ -374,6 +398,10 @@ export default function Home() {
   const deleteDepartment = async (
     department: Department
   ): Promise<boolean> => {
+    if (!canManageDepartments) {
+      return false
+    }
+
     const confirmed =
       window.confirm(
         `Delete the "${department.name}" department? Existing metadata and documents will remain, but their department assignment will become unassigned.`
@@ -391,6 +419,7 @@ export default function Home() {
           `${API_URL}/api/departments/${department.id}/delete`,
           {
             method: "POST",
+          credentials: "include",
           }
         );
 
@@ -774,6 +803,78 @@ const openDepartmentRecords = (
   useEffect(() => {
     void loadData();
   }, []);
+
+  useEffect(() => {
+    const query = searchTerm.trim();
+
+    if (!query) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchError("");
+      return;
+    }
+
+    let cancelled = false;
+
+    const timer = window.setTimeout(async () => {
+      try {
+        setSearchLoading(true);
+        setSearchError("");
+
+        const response = await fetch(
+          `${API_URL}/api/search?q=${encodeURIComponent(query)}`,
+          {
+            method: "GET",
+            credentials: "include",
+          }
+        );
+
+        const data = await response.json();
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data.error ||
+              "Unable to search records."
+          );
+        }
+
+        setSearchResults(
+          Array.isArray(data.results)
+            ? data.results
+            : []
+        );
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error(
+          "Search request failed:",
+          error
+        );
+
+        setSearchResults([]);
+        setSearchError(
+          error instanceof Error
+            ? error.message
+            : "Unable to search records."
+        );
+      } finally {
+        if (!cancelled) {
+          setSearchLoading(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchTerm]);
   const closeMetadataModal = () => {
     setShowMetadataModal(false);
   };
@@ -801,6 +902,10 @@ const openDepartmentRecords = (
   const handleMetadataSubmit = async (
     event: FormEvent<HTMLFormElement>
   ) => {
+    if (!canManageMetadata) {
+      return
+    }
+
     event.preventDefault();
 
     try {
@@ -931,6 +1036,10 @@ const openDepartmentRecords = (
   const handleUpload = async (
     event: FormEvent<HTMLFormElement>
   ) => {
+    if (!canManageDocuments) {
+      return
+    }
+
     event.preventDefault();
 
     if (!selectedFile) {
@@ -1082,6 +1191,10 @@ const openDepartmentRecords = (
   const handleAppraisalReview = async (
   decision: "APPROVE" | "REJECT"
 ) => {
+    if (!canManageDocuments) {
+      return
+    }
+
   if (!uploadedDocument?.id || !uploadedAppraisal) return;
 
   if (
@@ -1511,7 +1624,8 @@ const selectedDepartmentDocuments =
           </nav>
 
           <div className="border-t border-slate-200 p-4">
-            <button
+            {canManageDocuments && (
+<button
               type="button"
               onClick={() =>
                 setShowUploadModal(
@@ -1522,6 +1636,7 @@ const selectedDepartmentDocuments =
             >
               + Upload Document
             </button>
+            )}
 
             <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
               <div className="min-w-0">
@@ -1601,7 +1716,8 @@ const selectedDepartmentDocuments =
                   Search
                 </button>
 
-                <button
+                {canManageDocuments && (
+<button
                   type="button"
                   onClick={() =>
                     setShowUploadModal(
@@ -1612,6 +1728,7 @@ const selectedDepartmentDocuments =
                 >
                   + Upload Document
                 </button>
+                )}
               </div>
             </div>
           </header>
@@ -1647,7 +1764,8 @@ const selectedDepartmentDocuments =
                   </div>
 
                   <div className="mt-6 flex flex-wrap gap-3">
-                    <button
+                    {canManageMetadata && (
+<button
                       type="button"
                       onClick={() =>
                         setShowMetadataModal(
@@ -1658,6 +1776,7 @@ const selectedDepartmentDocuments =
                     >
                       + Add Metadata
                     </button>
+                    )}
 
                     <button
                       type="button"
@@ -1854,7 +1973,8 @@ const selectedDepartmentDocuments =
                       </p>
                     </div>
 
-                    <button
+                    {canManageMetadata && (
+<button
                       type="button"
                       onClick={() =>
                         setShowMetadataModal(
@@ -1865,6 +1985,7 @@ const selectedDepartmentDocuments =
                     >
                       Create Metadata Record
                     </button>
+                    )}
                   </div>
                 </div>
               </>
@@ -2271,7 +2392,8 @@ const selectedDepartmentDocuments =
                     system document code.
                   </p>
 
-                  <button
+                  {canManageDocuments && (
+<button
                     type="button"
                     onClick={() =>
                       setShowUploadModal(
@@ -2282,6 +2404,7 @@ const selectedDepartmentDocuments =
                   >
                     + Upload Document
                   </button>
+                  )}
                 </div>
 
                 <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -2322,7 +2445,8 @@ const selectedDepartmentDocuments =
                         the appraisal workflow.
                       </p>
 
-                      <button
+                      {canManageDocuments && (
+<button
                         type="button"
                         onClick={() =>
                           setShowUploadModal(
@@ -2333,6 +2457,7 @@ const selectedDepartmentDocuments =
                       >
                         Upload Document
                       </button>
+                        )}
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
@@ -2782,13 +2907,15 @@ const selectedDepartmentDocuments =
                   </p>
 
                   <div className="mt-5 flex flex-wrap items-center gap-3">
-                    <button
+                    {canManageDepartments && (
+<button
                       type="button"
                       onClick={openAddDepartmentModal}
                       className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
                     >
                       + Add Department
                     </button>
+                    )}
 
                     {departmentMutationError &&
                       !departmentModalOpen && (
@@ -2949,7 +3076,7 @@ const selectedDepartmentDocuments =
       {/* DEPARTMENT MODAL */}
       {/* =========================================================== */}
 
-      {departmentModalOpen && (
+      {departmentModalOpen && canManageDepartments && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="presentation"
@@ -4168,8 +4295,8 @@ const selectedDepartmentDocuments =
                           uploadedAppraisal.decision !==
                             "NEW_METADATA_CREATED" && (
                             <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                              {uploadedAppraisal.metadataRecordId && (
-                                <button
+                              {canManageDocuments && uploadedAppraisal.metadataRecordId && (
+<button
                                   type="button"
                                   disabled={reviewingDecision}
                                   onClick={() =>
@@ -4185,8 +4312,8 @@ const selectedDepartmentDocuments =
                                 </button>
                               )}
 
-                              {uploadedAppraisal.metadataRecordId && (
-                                <button
+                              {canManageDocuments && uploadedAppraisal.metadataRecordId && (
+<button
                                   type="button"
                                   disabled={reviewingDecision}
                                   onClick={() =>
@@ -4526,33 +4653,3 @@ function SettingRow({
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -8,16 +8,774 @@ import fs from "fs";
 import { Pool, type PoolClient } from "pg";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
+import { randomBytes, createHash, scrypt as scryptCallback, timingSafeEqual } from "crypto";
+import { promisify } from "util";
 
 const app = express();
+const scrypt = promisify(scryptCallback);
 const PORT = Number(process.env.PORT || 4000);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 
-app.use(cors());
+const webOrigin = process.env.WEB_ORIGIN || "http://localhost:3000";
+
+app.use(
+  cors({
+    origin: webOrigin,
+    credentials: true,
+  })
+);
 app.use(express.json());
+
+
+/* ============================================================
+   M10 AUTHENTICATION LAYER
+   ============================================================ */
+
+const SESSION_DURATION_DAYS = 7;
+
+type AuthUser = {
+  id: number;
+  email: string;
+  fullName: string | null;
+  role: "ADMIN" | "APPRAISER" | "VIEWER";
+  isActive: boolean;
+};
+
+type AuthenticatedRequest = Request & {
+  authUser?: AuthUser;
+  authSessionId?: number;
+};
+
+function normalizeEmail(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function createPasswordHash(
+  password: string
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const salt = randomBytes(16);
+
+    scryptCallback(
+      password,
+      salt,
+      64,
+      (error, derivedKey) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve(
+          [
+            "scrypt",
+            salt.toString("hex"),
+            derivedKey.toString("hex"),
+          ].join("$")
+        );
+      }
+    );
+  });
+}
+
+async function verifyPassword(
+  password: string,
+  storedHash: string
+): Promise<boolean> {
+  const parts = storedHash.split("$");
+
+  if (
+    parts.length !== 3 ||
+    parts[0] !== "scrypt"
+  ) {
+    return false;
+  }
+
+  const salt = Buffer.from(
+    parts[1]!,
+    "hex"
+  );
+
+  const expectedHash = Buffer.from(
+    parts[2]!,
+    "hex"
+  );
+
+  if (
+    salt.length === 0 ||
+    expectedHash.length === 0
+  ) {
+    return false;
+  }
+
+  const derivedKey = (await scrypt(
+    password,
+    salt,
+    expectedHash.length
+  )) as Buffer;
+
+  if (
+    derivedKey.length !==
+    expectedHash.length
+  ) {
+    return false;
+  }
+
+  return timingSafeEqual(
+    derivedKey,
+    expectedHash
+  );
+}
+
+function createSessionToken(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+function hashSessionToken(
+  token: string
+): Buffer {
+  return createHash("sha256")
+    .update(token, "utf8")
+    .digest();
+}
+
+function getSessionToken(
+  req: Request
+): string | null {
+  const cookieHeader =
+    req.headers.cookie;
+
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const cookies =
+    cookieHeader.split(";");
+
+  for (const cookie of cookies) {
+    const separator =
+      cookie.indexOf("=");
+
+    if (separator === -1) {
+      continue;
+    }
+
+    const name =
+      cookie.slice(0, separator).trim();
+
+    if (name !== "document_appraisal_session") {
+      continue;
+    }
+
+    return decodeURIComponent(
+      cookie.slice(separator + 1).trim()
+    );
+  }
+
+  return null;
+}
+
+function setSessionCookie(
+  res: Response,
+  token: string
+): void {
+  const secure =
+    process.env.NODE_ENV ===
+    "production";
+
+  const maxAge =
+    SESSION_DURATION_DAYS *
+    24 *
+    60 *
+    60;
+
+  const cookie = [
+    `document_appraisal_session=${encodeURIComponent(token)}`,
+    "Path=/",
+    `Max-Age=${maxAge}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    secure ? "Secure" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+
+  res.setHeader(
+    "Set-Cookie",
+    cookie
+  );
+}
+
+function clearSessionCookie(
+  res: Response
+): void {
+  res.setHeader(
+    "Set-Cookie",
+    [
+      "document_appraisal_session=",
+      "Path=/",
+      "Max-Age=0",
+      "HttpOnly",
+      "SameSite=Lax",
+      process.env.NODE_ENV ===
+      "production"
+        ? "Secure"
+        : "",
+    ]
+      .filter(Boolean)
+      .join("; ")
+  );
+}
+
+async function findAuthenticatedUser(
+  req: Request
+): Promise<{
+  user: AuthUser;
+  sessionId: number;
+} | null> {
+  const token =
+    getSessionToken(req);
+
+  if (!token) {
+    return null;
+  }
+
+  const tokenHash =
+    hashSessionToken(token);
+
+  const result =
+    await pool.query(
+      `
+        SELECT
+          s.id AS session_id,
+          u.id,
+          u.email,
+          u.full_name,
+          u.role,
+          u.is_active
+        FROM sessions s
+        INNER JOIN users u
+          ON u.id = s.user_id
+        WHERE s.token_hash = $1
+          AND s.revoked_at IS NULL
+          AND s.expires_at > NOW()
+        LIMIT 1
+      `,
+      [tokenHash]
+    );
+
+  if (result.rowCount === 0) {
+    return null;
+  }
+
+  const row =
+    result.rows[0];
+
+  await pool.query(
+    `
+      UPDATE sessions
+      SET last_seen_at = NOW()
+      WHERE id = $1
+    `,
+    [row.session_id]
+  );
+
+  return {
+    user: {
+      id: Number(row.id),
+      email: row.email,
+      fullName:
+        row.full_name || null,
+      role: row.role,
+      isActive:
+        Boolean(row.is_active),
+    },
+    sessionId:
+      Number(row.session_id),
+  };
+}
+
+async function requireAuthentication(
+  req: Request,
+  res: Response,
+  next: () => void
+): Promise<void> {
+  try {
+    const authenticated =
+      await findAuthenticatedUser(req);
+
+    if (!authenticated) {
+      res.status(401).json({
+        success: false,
+        error:
+          "Authentication required",
+      });
+      return;
+    }
+
+    const authenticatedRequest =
+      req as AuthenticatedRequest;
+
+    authenticatedRequest.authUser =
+      authenticated.user;
+
+    authenticatedRequest.authSessionId =
+      authenticated.sessionId;
+
+    next();
+  } catch (error) {
+    console.error(
+      "Authentication middleware failed:",
+      error
+    );
+
+    res.status(500).json({
+      success: false,
+      error:
+        "Unable to validate authentication",
+    });
+  }
+}
+
+function requireRole(
+  ...allowedRoles: Array<
+    "ADMIN" |
+    "APPRAISER" |
+    "VIEWER"
+  >
+) {
+  return (
+    req: Request,
+    res: Response,
+    next: () => void
+  ): void => {
+    const authenticatedRequest =
+      req as AuthenticatedRequest;
+
+    const user =
+      authenticatedRequest.authUser;
+
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        error:
+          "Authentication required",
+      });
+      return;
+    }
+
+    if (
+      !allowedRoles.includes(
+        user.role
+      )
+    ) {
+      res.status(403).json({
+        success: false,
+        error:
+          "You do not have permission to perform this action",
+      });
+      return;
+    }
+
+    next();
+  };
+}
+
+/* ============================================================
+   M10 AUTHENTICATION ROUTES
+   ============================================================ */
+
+
+app.post(
+  "/api/auth/signup",
+  async (req: Request, res: Response) => {
+    try {
+      const fullName =
+        typeof req.body?.fullName ===
+          "string"
+          ? req.body.fullName.trim()
+          : "";
+
+      const email = normalizeEmail(
+        typeof req.body?.email ===
+          "string"
+          ? req.body.email
+          : ""
+      );
+
+      const password =
+        typeof req.body?.password ===
+          "string"
+          ? req.body.password
+          : "";
+
+      const confirmPassword =
+        typeof req.body?.confirmPassword ===
+          "string"
+          ? req.body.confirmPassword
+          : "";
+
+      if (!fullName) {
+        return res.status(400).json({
+          success: false,
+          error: "Full name is required.",
+        });
+      }
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          error: "Email is required.",
+        });
+      }
+
+      if (password.length < 8) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Password must be at least 8 characters long.",
+        });
+      }
+
+      if (password !== confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          error: "Passwords do not match.",
+        });
+      }
+
+      const existingUser = await pool.query(
+        `
+          SELECT id
+          FROM users
+          WHERE LOWER(email) = LOWER($1)
+          LIMIT 1
+        `,
+        [email]
+      );
+
+      if (existingUser.rowCount) {
+        return res.status(409).json({
+          success: false,
+          error:
+            "An account with this email already exists.",
+        });
+      }
+
+      const passwordHash =
+        await createPasswordHash(password);
+
+      const result = await pool.query(
+        `
+          INSERT INTO users (
+            email,
+            password_hash,
+            full_name,
+            role,
+            is_active
+          )
+          VALUES ($1, $2, $3, 'VIEWER', TRUE)
+          RETURNING
+            id,
+            email,
+            full_name AS "fullName",
+            role,
+            is_active AS "isActive"
+        `,
+        [email, passwordHash, fullName]
+      );
+
+      const user = result.rows[0] as {
+        id: number;
+        email: string;
+        fullName: string | null;
+        role:
+          | "ADMIN"
+          | "APPRAISER"
+          | "VIEWER";
+        isActive: boolean;
+      };
+
+      const sessionToken =
+        createSessionToken();
+
+      const tokenHash =
+        hashSessionToken(sessionToken);
+
+      const expiresAt = new Date(
+        Date.now() +
+          SESSION_DURATION_DAYS *
+          24 *
+          60 *
+          60 *
+          1000
+      );
+
+      await pool.query(
+        `
+          INSERT INTO sessions (
+            user_id,
+            token_hash,
+            expires_at
+          )
+          VALUES ($1, $2, $3)
+        `,
+        [
+          user.id,
+          tokenHash,
+          expiresAt,
+        ]
+      );
+
+      setSessionCookie(
+        res,
+        sessionToken
+      );
+
+      return res.status(201).json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error(
+        "Signup failed:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          "Unable to create account.",
+      });
+    }
+  }
+);
+app.post(
+  "/api/auth/login",
+  async (
+    req: Request,
+    res: Response
+  ) => {
+    const email =
+      normalizeEmail(
+        req.body?.email
+      );
+
+    const password =
+      typeof req.body?.password ===
+      "string"
+        ? req.body.password
+        : "";
+
+    if (
+      !email ||
+      !password
+    ) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Email and password are required",
+      });
+    }
+
+    try {
+      const result =
+        await pool.query(
+          `
+            SELECT
+              id,
+              email,
+              password_hash,
+              full_name,
+              role,
+              is_active
+            FROM users
+            WHERE LOWER(email) = LOWER($1)
+            LIMIT 1
+          `,
+          [email]
+        );
+
+      if (
+        result.rowCount === 0
+      ) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Invalid email or password",
+        });
+      }
+
+      const row =
+        result.rows[0];
+
+      if (!row.is_active) {
+        return res.status(403).json({
+          success: false,
+          error:
+            "This account is inactive",
+        });
+      }
+
+      const passwordValid =
+        await verifyPassword(
+          password,
+          row.password_hash
+        );
+
+      if (!passwordValid) {
+        return res.status(401).json({
+          success: false,
+          error:
+            "Invalid email or password",
+        });
+      }
+
+      const token =
+        createSessionToken();
+
+      const tokenHash =
+        hashSessionToken(token);
+
+      const expiresAt =
+        new Date(
+          Date.now() +
+            SESSION_DURATION_DAYS *
+              24 *
+              60 *
+              60 *
+              1000
+        );
+
+      await pool.query(
+        `
+          INSERT INTO sessions (
+            user_id,
+            token_hash,
+            expires_at
+          )
+          VALUES ($1, $2, $3)
+        `,
+        [
+          Number(row.id),
+          tokenHash,
+          expiresAt,
+        ]
+      );
+
+      setSessionCookie(
+        res,
+        token
+      );
+
+      return res.json({
+        success: true,
+        user: {
+          id: Number(row.id),
+          email: row.email,
+          fullName:
+            row.full_name || null,
+          role: row.role,
+          isActive:
+            Boolean(row.is_active),
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Login failed:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          "Unable to log in",
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/auth/logout",
+  async (
+    req: Request,
+    res: Response
+  ) => {
+    const token =
+      getSessionToken(req);
+
+    if (token) {
+      try {
+        await pool.query(
+          `
+            UPDATE sessions
+            SET revoked_at = NOW()
+            WHERE token_hash = $1
+              AND revoked_at IS NULL
+          `,
+          [hashSessionToken(token)]
+        );
+      } catch (error) {
+        console.error(
+          "Logout session update failed:",
+          error
+        );
+      }
+    }
+
+    clearSessionCookie(res);
+
+    return res.json({
+      success: true,
+    });
+  }
+);
+
+app.get(
+  "/api/auth/me",
+  async (
+    req: Request,
+    res: Response
+  ) => {
+    try {
+      const authenticated =
+        await findAuthenticatedUser(req);
+
+      if (!authenticated) {
+        return res.status(401).json({
+          success: false,
+          authenticated: false,
+          error:
+            "Authentication required",
+        });
+      }
+
+      return res.json({
+        success: true,
+        authenticated: true,
+        user:
+          authenticated.user,
+      });
+    } catch (error) {
+      console.error(
+        "Auth session lookup failed:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        authenticated: false,
+        error:
+          "Unable to validate session",
+      });
+    }
+  }
+);
 
 const projectRoot = path.resolve(
   process.cwd(),
@@ -1245,6 +2003,7 @@ app.get(
 
 app.get(
   "/api/dashboard",
+  requireAuthentication,
   async (
     _req: Request,
     res: Response
@@ -1319,6 +2078,7 @@ app.get(
 
 app.get(
   "/api/departments",
+  requireAuthentication,
   async (
     _req: Request,
     res: Response
@@ -1357,6 +2117,8 @@ app.get(
 
 app.post(
   "/api/departments",
+  requireAuthentication,
+  requireRole("ADMIN"),
   async (
     req: Request,
     res: Response
@@ -1440,6 +2202,8 @@ app.post(
 
 app.post(
   "/api/departments/:departmentId",
+  requireAuthentication,
+  requireRole("ADMIN"),
   async (
     req: Request,
     res: Response
@@ -1550,6 +2314,8 @@ app.post(
 
 app.post(
   "/api/departments/:departmentId/delete",
+  requireAuthentication,
+  requireRole("ADMIN"),
   async (
     req: Request,
     res: Response
@@ -1615,6 +2381,7 @@ app.post(
 );
 app.get(
   "/api/document-types",
+  requireAuthentication,
   async (
     _req: Request,
     res: Response
@@ -1652,6 +2419,7 @@ app.get(
 
 app.get(
   "/api/search",
+  requireAuthentication,
   async (
     req: Request,
     res: Response
@@ -1863,6 +2631,7 @@ app.get(
 );
 app.get(
   "/api/metadata",
+  requireAuthentication,
   async (
     _req: Request,
     res: Response
@@ -1982,6 +2751,8 @@ app.get(
 
 app.post(
   "/api/metadata",
+  requireAuthentication,
+  requireRole("ADMIN", "APPRAISER"),
   async (
     req: Request,
     res: Response
@@ -2143,6 +2914,7 @@ app.post(
 
 app.get(
   "/api/documents",
+  requireAuthentication,
   async (
     _req: Request,
     res: Response
@@ -2222,6 +2994,7 @@ app.get(
 
 app.get(
   "/api/documents/:documentId/appraisal",
+  requireAuthentication,
   async (
     req: Request,
     res: Response
@@ -2389,6 +3162,8 @@ app.get(
 
 app.post(
   "/api/documents/upload",
+  requireAuthentication,
+  requireRole("ADMIN", "APPRAISER"),
   upload.single("file"),
   async (
     req: Request,
@@ -3373,6 +4148,8 @@ app.post(
 
 app.post(
   "/api/documents/:documentId/link",
+  requireAuthentication,
+  requireRole("ADMIN", "APPRAISER"),
   async (
     req: Request,
     res: Response
@@ -3644,6 +4421,8 @@ app.post(
 
 app.post(
   "/api/documents/:documentId/review",
+  requireAuthentication,
+  requireRole("ADMIN", "APPRAISER"),
   async (
     req: Request,
     res: Response
@@ -4450,6 +5229,7 @@ app.post(
 
 app.get(
   "/api/documents/:documentId/file",
+  requireAuthentication,
   async (
     req: Request,
     res: Response
@@ -4555,5 +5335,3 @@ app.listen(
     );
   }
 );
-
-
