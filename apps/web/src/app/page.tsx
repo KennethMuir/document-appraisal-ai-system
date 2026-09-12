@@ -86,6 +86,14 @@ type SearchResult = {
   document_type_name: string | null;
   linked_documents: SearchResultDocument[];
 };
+type AuthUser = {
+  id: number;
+  email: string;
+  fullName: string | null;
+  role: "ADMIN" | "APPRAISER" | "VIEWER";
+  isActive: boolean;
+};
+
 type UploadedDocument = {
   [key: string]: unknown;
   id?: string | number;
@@ -193,6 +201,17 @@ const EMPTY_FORM = {
 export default function Home() {
   const [activePage, setActivePage] = useState("Dashboard");
 
+  const [authUser, setAuthUser] =
+    useState<AuthUser | null>(null);
+
+  const [loggingOut, setLoggingOut] =
+    useState(false);
+
+  const [authLoading, setAuthLoading] =
+    useState(true);
+
+  const [authError, setAuthError] =
+    useState("");
   const [statistics, setStatistics] =
     useState<Statistics | null>(null);
 
@@ -601,77 +620,13 @@ const openDepartmentRecords = (
     return String(value);
   };
 
-  const filteredMetadata =
-    metadata.filter((record: MetadataRecord) => {
-      if (selectedDepartmentId !== null) {
-        const department =
-          departments.find(
-            (item) =>
-              item.id ===
-              selectedDepartmentId
-          );
+  /*
+   * =============================================================
+   * MODAL CLOSE HELPERS
+   * =============================================================
+   */
 
-        if (
-          !department ||
-          record.department_name !==
-            department.name
-        ) {
-          return false;
-        }
-      }
-
-      const query =
-        searchTerm.trim().toLowerCase();
-
-      if (!query) {
-        return true;
-      }
-
-      return [
-        record.reference_code,
-        record.title,
-        record.person_name,
-        record.description,
-        record.section,
-        record.department_name,
-        record.document_type_name,
-        record.status,
-        record.linked_document_code,
-        record.linked_filename,
-      ]
-        .filter(Boolean)
-        .some((value) =>
-          String(value)
-            .toLowerCase()
-            .includes(query)
-        );
-    });
-const selectedDepartment =
-  selectedDepartmentId !== null
-    ? departments.find(
-        (department) =>
-          department.id ===
-          selectedDepartmentId
-      ) ?? null
-    : null;
-
-const selectedDepartmentDocuments =
-  selectedDepartmentId !== null
-    ? documents.filter((document) => {
-        const documentDepartmentId =
-          document.department_id;
-
-        return (
-          documentDepartmentId !==
-            undefined &&
-          documentDepartmentId !==
-            null &&
-          Number(documentDepartmentId) ===
-            selectedDepartmentId
-        );
-      })
-    : [];
-const loadData = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
 
@@ -753,338 +708,72 @@ const loadData = async () => {
   };
 
   useEffect(() => {
-    void loadData();
-  }, []);
-  useEffect(() => {
-    const query = searchTerm.trim();
-
-    if (!query) {
-      setSearchResults([]);
-      setSearchError("");
-      setSearchLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
-    const timer = window.setTimeout(async () => {
+    const verifySession = async () => {
       try {
-        setSearchLoading(true);
-        setSearchError("");
+        setAuthError("");
 
         const response = await fetch(
-          `${API_URL}/api/search?q=${encodeURIComponent(query)}`
+          `${API_URL}/api/auth/me`,
+          {
+            method: "GET",
+            credentials: "include",
+          }
         );
 
         const data = await response.json();
 
-        if (!response.ok || !data.success) {
-          throw new Error(
-            data.error ||
-              "Unable to search records"
-          );
-        }
-
-        if (!cancelled) {
-          setSearchResults(
-            Array.isArray(data.results)
-              ? data.results
-              : []
-          );
-        }
-      } catch (error) {
-        console.error(
-          "Search request failed:",
-          error
-        );
-
-        if (!cancelled) {
-          setSearchResults([]);
-          setSearchError(
-            "Unable to search records. Please try again."
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setSearchLoading(false);
-        }
-      }
-    }, 300);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [searchTerm]);
-
-  /*
-   * =============================================================
-   * ACCESSIBLE MODAL BEHAVIOR
-   * =============================================================
-   *
-   * Handles:
-   * - Focus capture when a modal opens
-   * - Focus restoration when it closes
-   * - Keyboard focus trapping
-   * - Escape-to-close
-   * - Body scroll locking
-   * - Background inert behavior
-   *
-   * The effect intentionally does NOT depend on `uploading`.
-   * Upload state changes must not restart the modal lifecycle.
-   */
-
-  useEffect(() => {
-    const modalIsOpen =
-      showMetadataModal || showUploadModal;
-
-    const appContent =
-      appContentRef.current as
-        | (HTMLDivElement & {
-            inert: boolean;
-          })
-        | null;
-
-    if (!modalIsOpen) {
-      if (appContent) {
-        appContent.inert = false;
-        appContent.removeAttribute(
-          "aria-hidden"
-        );
-      }
-
-      if (bodyScrollLockActiveRef.current) {
-        document.body.style.overflow =
-          previousBodyOverflowRef.current;
-
-        previousBodyOverflowRef.current =
-          "";
-
-        bodyScrollLockActiveRef.current =
-          false;
-      }
-
-      if (
-        previousFocusedElementRef.current &&
-        document.contains(
-          previousFocusedElementRef.current
-        )
-      ) {
-        const elementToRestore =
-          previousFocusedElementRef.current;
-
-        previousFocusedElementRef.current =
-          null;
-
-        window.requestAnimationFrame(() => {
-          elementToRestore.focus();
-        });
-      } else {
-        previousFocusedElementRef.current =
-          null;
-      }
-
-      return;
-    }
-
-    if (
-      !previousFocusedElementRef.current
-    ) {
-      const activeElement =
-        document.activeElement;
-
-      if (
-        activeElement instanceof HTMLElement
-      ) {
-        previousFocusedElementRef.current =
-          activeElement;
-      }
-    }
-
-    if (!bodyScrollLockActiveRef.current) {
-      previousBodyOverflowRef.current =
-        document.body.style.overflow;
-
-      bodyScrollLockActiveRef.current =
-        true;
-    }
-
-    document.body.style.overflow =
-      "hidden";
-
-    if (appContent) {
-      appContent.inert = true;
-      appContent.setAttribute(
-        "aria-hidden",
-        "true"
-      );
-    }
-
-    const focusTimer =
-      window.requestAnimationFrame(() => {
-        modalCloseButtonRef.current?.focus();
-      });
-
-    const handleKeyDown = (
-      event: KeyboardEvent
-    ) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-
-        if (
-          showUploadModal &&
-          uploadingRef.current
-        ) {
+        if (cancelled) {
           return;
         }
 
-        if (showUploadModal) {
-          closeUploadModal();
-        } else if (showMetadataModal) {
-          closeMetadataModal();
+        if (
+          !response.ok ||
+          !data.success ||
+          !data.authenticated ||
+          !data.user
+        ) {
+          setAuthUser(null);
+          setAuthError(
+            data.error ||
+              "Your session has expired. Please sign in again."
+          );
+          return;
         }
 
-        return;
-      }
+        setAuthUser(data.user);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
 
-      if (event.key !== "Tab") {
-        return;
-      }
-
-      const modal =
-        modalRef.current;
-
-      if (!modal) {
-        return;
-      }
-
-      const focusableElements =
-        Array.from(
-          modal.querySelectorAll<HTMLElement>(
-            [
-              'button:not([disabled])',
-              'a[href]',
-              'input:not([disabled])',
-              'select:not([disabled])',
-              'textarea:not([disabled])',
-              '[tabindex]:not([tabindex="-1"])',
-            ].join(",")
-          )
-        ).filter(
-          (element) => {
-            if (
-              element.hasAttribute(
-                "disabled"
-              )
-            ) {
-              return false;
-            }
-
-            if (
-              element.getAttribute(
-                "aria-hidden"
-              ) === "true"
-            ) {
-              return false;
-            }
-
-            if (
-              element.tabIndex === -1
-            ) {
-              return false;
-            }
-
-            const style =
-              window.getComputedStyle(
-                element
-              );
-
-            return (
-              style.display !==
-                "none" &&
-              style.visibility !==
-                "hidden"
-            );
-          }
+        console.error(
+          "Session verification failed:",
+          error
         );
 
-      if (
-        focusableElements.length === 0
-      ) {
-        event.preventDefault();
-        modal.focus();
-        return;
-      }
-
-      const firstElement =
-        focusableElements[0];
-
-      const lastElement =
-        focusableElements[
-          focusableElements.length - 1
-        ];
-
-      if (
-        event.shiftKey &&
-        document.activeElement ===
-          firstElement
-      ) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (
-        !event.shiftKey &&
-        document.activeElement ===
-          lastElement
-      ) {
-        event.preventDefault();
-        firstElement.focus();
+        setAuthUser(null);
+        setAuthError(
+          "Unable to verify your session. Please sign in again."
+        );
+      } finally {
+        if (!cancelled) {
+          setAuthLoading(false);
+        }
       }
     };
 
-    document.addEventListener(
-      "keydown",
-      handleKeyDown
-    );
+    void verifySession();
 
     return () => {
-      window.cancelAnimationFrame(
-        focusTimer
-      );
-
-      document.removeEventListener(
-        "keydown",
-        handleKeyDown
-      );
-
-      if (bodyScrollLockActiveRef.current) {
-        document.body.style.overflow =
-          previousBodyOverflowRef.current;
-
-        previousBodyOverflowRef.current =
-          "";
-
-        bodyScrollLockActiveRef.current =
-          false;
-      }
-
-      if (appContent) {
-        appContent.inert = false;
-        appContent.removeAttribute(
-          "aria-hidden"
-        );
-      }
+      cancelled = true;
     };
-  }, [
-    showMetadataModal,
-    showUploadModal,
-  ]);
+  }, []);
 
-  /*
-   * =============================================================
-   * MODAL CLOSE HELPERS
-   * =============================================================
-   */
-
+  useEffect(() => {
+    void loadData();
+  }, []);
   const closeMetadataModal = () => {
     setShowMetadataModal(false);
   };
@@ -1532,6 +1221,29 @@ const loadData = async () => {
     setReviewingDecision(false);
   }
 };
+
+  const logout = async () => {
+    if (loggingOut) {
+      return;
+    }
+
+    try {
+      setLoggingOut(true);
+
+      await fetch(
+        `${API_URL}/api/auth/logout`,
+        {
+          method: "POST",
+          credentials: "include",
+        }
+      );
+    } catch (error) {
+      console.error("Logout request failed:", error);
+    } finally {
+      window.location.href = "/login";
+    }
+  };
+
   const uploadFieldEntries =
     uploadedDocument
       ? Object.entries(
@@ -1565,6 +1277,117 @@ const loadData = async () => {
   const appraisalIsLinked =
     uploadedAppraisal?.decision ===
     "LINKED";
+
+  const filteredMetadata =
+    metadata.filter((record: MetadataRecord) => {
+      if (selectedDepartmentId !== null) {
+        const department =
+          departments.find(
+            (item) =>
+              item.id ===
+              selectedDepartmentId
+          );
+
+        if (
+          !department ||
+          record.department_name !==
+            department.name
+        ) {
+          return false;
+        }
+      }
+
+      const query =
+        searchTerm.trim().toLowerCase();
+
+      if (!query) {
+        return true;
+      }
+
+      return [
+        record.reference_code,
+        record.title,
+        record.person_name,
+        record.description,
+        record.section,
+        record.department_name,
+        record.document_type_name,
+        record.status,
+        record.linked_document_code,
+        record.linked_filename,
+      ]
+        .filter(Boolean)
+        .some((value) =>
+          String(value)
+            .toLowerCase()
+            .includes(query)
+        );
+    });
+const selectedDepartment =
+  selectedDepartmentId !== null
+    ? departments.find(
+        (department) =>
+          department.id ===
+          selectedDepartmentId
+      ) ?? null
+    : null;
+
+const selectedDepartmentDocuments =
+  selectedDepartmentId !== null
+    ? documents.filter((document) => {
+        const documentDepartmentId =
+          document.department_id;
+
+        return (
+          documentDepartmentId !==
+            undefined &&
+          documentDepartmentId !==
+            null &&
+          Number(documentDepartmentId) ===
+            selectedDepartmentId
+        );
+      })
+    : [];
+
+  if (authLoading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f5f7fa] text-slate-900">
+        <div className="rounded-2xl border border-slate-200 bg-white px-8 py-6 text-center shadow-sm">
+          <p className="text-sm font-semibold">
+            Verifying your session...
+          </p>
+
+          <p className="mt-2 text-xs text-slate-500">
+            Please wait.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f5f7fa] text-slate-900">
+        <div className="rounded-2xl border border-slate-200 bg-white px-8 py-6 text-center shadow-sm">
+          <p className="text-sm font-semibold">
+            {authError || "Redirecting to sign in..."}
+          </p>
+
+          {authError ? (
+            <button
+              type="button"
+              onClick={() => {
+                window.location.href = "/login";
+              }}
+              className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+            >
+              Go to sign in
+            </button>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#f5f7fa] text-slate-900">
@@ -1700,6 +1523,35 @@ const loadData = async () => {
               + Upload Document
             </button>
 
+            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-800">
+                  {authUser?.fullName ||
+                    authUser?.email}
+                </p>
+
+                <p className="mt-1 truncate text-xs text-slate-500">
+                  {authUser?.email}
+                </p>
+
+                <p className="mt-2 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">
+                  {authUser?.role}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  void logout();
+                }}
+                disabled={loggingOut}
+                className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loggingOut
+                  ? "Signing out..."
+                  : "Sign out"}
+              </button>
+            </div>
             <div className="rounded-xl bg-slate-50 p-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                 System status
@@ -3093,7 +2945,191 @@ const loadData = async () => {
       </div>
 
       {/* =========================================================== */}
-      {/* METADATA MODAL */}
+            {/* =========================================================== */}
+      {/* DEPARTMENT MODAL */}
+      {/* =========================================================== */}
+
+      {departmentModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="department-modal-title"
+            aria-describedby="department-modal-description"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl outline-none"
+          >
+            <div className="border-b border-slate-200 px-6 py-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Organizational structure
+                  </p>
+
+                  <h2
+                    id="department-modal-title"
+                    className="mt-1 text-xl font-bold"
+                  >
+                    {departmentEditingId === null
+                      ? "Add Department"
+                      : "Edit Department"}
+                  </h2>
+
+                  <p
+                    id="department-modal-description"
+                    className="mt-1 text-sm text-slate-500"
+                  >
+                    {departmentEditingId === null
+                      ? "Create a department for organizing institutional records."
+                      : "Update the department information used to classify institutional records."}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeDepartmentModal}
+                  disabled={departmentSaving}
+                  aria-label="Close department dialog"
+                  className="ml-4 rounded-lg p-2 text-2xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5 p-6">
+              <FormField
+                id="department-name"
+                label="Department Name *"
+                value={departmentForm.name}
+                onChange={(value) =>
+                  setDepartmentForm({
+                    ...departmentForm,
+                    name: value,
+                  })
+                }
+                placeholder="Administration"
+                required
+              />
+
+              <FormField
+                id="department-code"
+                label="Department Code *"
+                value={departmentForm.code}
+                onChange={(value) =>
+                  setDepartmentForm({
+                    ...departmentForm,
+                    code: value,
+                  })
+                }
+                placeholder="AD"
+                required
+              />
+
+              <div>
+                <label
+                  htmlFor="department-description"
+                  className="mb-2 block text-sm font-semibold"
+                >
+                  Description
+                </label>
+
+                <textarea
+                  id="department-description"
+                  value={departmentForm.description}
+                  onChange={(event) =>
+                    setDepartmentForm({
+                      ...departmentForm,
+                      description: event.target.value,
+                    })
+                  }
+                  placeholder="Administrative records"
+                  rows={4}
+                  className="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                />
+              </div>
+
+              {departmentMutationError && (
+                <p
+                  role="alert"
+                  className="text-sm font-medium text-red-600"
+                >
+                  {departmentMutationError}
+                </p>
+              )}
+
+              <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-5">
+                {departmentEditingId !== null ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const department =
+                        departments.find(
+                          (item) =>
+                            item.id ===
+                            departmentEditingId
+                        );
+
+                      if (!department || departmentSaving) {
+                        return;
+                      }
+
+                      setDepartmentSaving(true);
+
+                      try {
+                        const deleted =
+                          await deleteDepartment(
+                            department
+                          );
+
+                        if (deleted) {
+                          setDepartmentModalOpen(false);
+                          setDepartmentMutationError("");
+                        }
+                      } finally {
+                        setDepartmentSaving(false);
+                      }
+                    }}
+                    disabled={departmentSaving}
+                    className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Delete Department
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={closeDepartmentModal}
+                    disabled={departmentSaving}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => void saveDepartment()}
+                    disabled={departmentSaving}
+                    className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {departmentSaving
+                      ? "Saving..."
+                      : departmentEditingId === null
+                        ? "Add Department"
+                        : "Save Changes"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+{/* METADATA MODAL */}
       {/* =========================================================== */}
 
       {showMetadataModal && (
@@ -4490,6 +4526,20 @@ function SettingRow({
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
