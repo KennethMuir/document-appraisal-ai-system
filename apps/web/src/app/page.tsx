@@ -54,6 +54,38 @@ type MetadataRecord = {
   linked_filename: string | null;
 };
 
+type SearchResultDocument = {
+  id: string | number;
+  document_code: string;
+  filename: string;
+  title: string | null;
+  document_date: string | null;
+  upload_date: string;
+  year: number | null;
+  person_name: string | null;
+  file_type: string | null;
+  file_size: number | null;
+  status: string;
+  upload_number: number | null;
+};
+
+type SearchResult = {
+  id: string;
+  reference_code: string;
+  title: string | null;
+  document_date: string | null;
+  year: number | null;
+  person_name: string | null;
+  description: string | null;
+  section: string | null;
+  status: string;
+  department_id: number | null;
+  department_name: string | null;
+  department_code: string | null;
+  document_type_id: number | null;
+  document_type_name: string | null;
+  linked_documents: SearchResultDocument[];
+};
 type UploadedDocument = {
   [key: string]: unknown;
   id?: string | number;
@@ -417,6 +449,14 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
   const [reviewError, setReviewError] =
     useState("");
 
+  const [searchResults, setSearchResults] =
+    useState<SearchResult[]>([]);
+
+  const [searchLoading, setSearchLoading] =
+    useState(false);
+
+  const [searchError, setSearchError] =
+    useState("");
   const [searchTerm, setSearchTerm] =
     useState("");
 
@@ -715,6 +755,67 @@ const loadData = async () => {
   useEffect(() => {
     void loadData();
   }, []);
+  useEffect(() => {
+    const query = searchTerm.trim();
+
+    if (!query) {
+      setSearchResults([]);
+      setSearchError("");
+      setSearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const timer = window.setTimeout(async () => {
+      try {
+        setSearchLoading(true);
+        setSearchError("");
+
+        const response = await fetch(
+          `${API_URL}/api/search?q=${encodeURIComponent(query)}`
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(
+            data.error ||
+              "Unable to search records"
+          );
+        }
+
+        if (!cancelled) {
+          setSearchResults(
+            Array.isArray(data.results)
+              ? data.results
+              : []
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Search request failed:",
+          error
+        );
+
+        if (!cancelled) {
+          setSearchResults([]);
+          setSearchError(
+            "Unable to search records. Please try again."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setSearchLoading(false);
+        }
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchTerm]);
 
   /*
    * =============================================================
@@ -2468,7 +2569,6 @@ const loadData = async () => {
             {/* ===================================================== */}
             {/* SEARCH */}
             {/* ===================================================== */}
-
             {activePage ===
               "Search" && (
               <>
@@ -2482,9 +2582,9 @@ const loadData = async () => {
                   </h2>
 
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                    Search across registered metadata using reference codes,
-                    people, titles, departments, document types and linked
-                    documents.
+                    Search across metadata and documents using document codes,
+                    reference codes, people, titles, departments, sections,
+                    document types, dates and statuses.
                   </p>
 
                   <div className="relative mt-6">
@@ -2525,15 +2625,58 @@ const loadData = async () => {
                       aria-live="polite"
                       className="mt-1 text-sm text-slate-500"
                     >
-                      {searchTerm
-                        ? `${filteredMetadata.length} matching metadata record(s)`
-                        : "Enter a search term to explore the registry."}
+                      {searchLoading
+                        ? "Searching records..."
+                        : searchError
+                          ? searchError
+                          : searchTerm.trim()
+                            ? `${searchResults.length} matching record${
+                                searchResults.length ===
+                                1
+                                  ? ""
+                                  : "s"
+                              }`
+                            : "Enter a search term to explore the registry."}
                     </p>
                   </div>
 
+                  {searchError && (
+                    <div
+                      role="alert"
+                      className="border-b border-red-100 bg-red-50 px-6 py-5"
+                    >
+                      <p className="font-semibold text-red-700">
+                        Search unavailable
+                      </p>
+
+                      <p className="mt-1 text-sm text-red-600">
+                        {searchError}
+                      </p>
+                    </div>
+                  )}
+
                   <div className="divide-y divide-slate-100">
-                    {searchTerm &&
-                      filteredMetadata.map(
+                    {searchLoading && (
+                      <div className="p-12 text-center">
+                        <div
+                          aria-hidden="true"
+                          className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-slate-700"
+                        />
+
+                        <p className="mt-4 font-semibold">
+                          Searching your records
+                        </p>
+
+                        <p className="mt-2 text-sm text-slate-500">
+                          Checking metadata and linked documents...
+                        </p>
+                      </div>
+                    )}
+
+                    {!searchLoading &&
+                      !searchError &&
+                      searchTerm.trim() &&
+                      searchResults.map(
                         (record) => (
                           <div
                             key={
@@ -2541,8 +2684,8 @@ const loadData = async () => {
                             }
                             className="p-6 transition hover:bg-slate-50"
                           >
-                            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                              <div>
+                            <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
+                              <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-3">
                                   <span className="font-bold text-blue-600">
                                     {
@@ -2555,303 +2698,218 @@ const loadData = async () => {
                                       record.status
                                     }
                                   />
+
+                                  {record.section && (
+                                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                                      {
+                                        record.section
+                                      }
+                                    </span>
+                                  )}
                                 </div>
 
-                                <h4 className="mt-2 font-bold">
+                                <h4 className="mt-3 text-lg font-bold">
                                   {
                                     record.title ||
-                                    "Untitled document"
+                                    "Untitled metadata record"
                                   }
                                 </h4>
 
-                                <p className="mt-1 text-sm text-slate-500">
-                                  {
-                                    record.person_name ||
-                                    "No person recorded"
-                                  }
-                                  {" · "}
-                                  {
-                                    record.department_name ||
-                                    "No department"
-                                  }
-                                  {" · "}
-                                  {
-                                    record.document_type_name ||
-                                    "No type"
-                                  }
-                                </p>
-                              </div>
-
-                              {record.linked_document_code && (
-                                <div className="rounded-xl bg-blue-50 px-4 py-3">
-                                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-500">
-                                    Linked document
+                                <div className="mt-3 grid gap-2 text-sm text-slate-500 md:grid-cols-2">
+                                  <p>
+                                    <span className="font-semibold text-slate-700">
+                                      Person:
+                                    </span>{" "}
+                                    {
+                                      record.person_name ||
+                                      "Not recorded"
+                                    }
                                   </p>
 
-                                  <p className="mt-1 font-bold text-blue-700">
+                                  <p>
+                                    <span className="font-semibold text-slate-700">
+                                      Department:
+                                    </span>{" "}
                                     {
-                                      record.linked_document_code
+                                      record.department_name ||
+                                      "Not assigned"
+                                    }
+                                  </p>
+
+                                  <p>
+                                    <span className="font-semibold text-slate-700">
+                                      Type:
+                                    </span>{" "}
+                                    {
+                                      record.document_type_name ||
+                                      "Not assigned"
+                                    }
+                                  </p>
+
+                                  <p>
+                                    <span className="font-semibold text-slate-700">
+                                      Year:
+                                    </span>{" "}
+                                    {
+                                      record.year ||
+                                      "Not recorded"
+                                    }
+                                  </p>
+
+                                  <p>
+                                    <span className="font-semibold text-slate-700">
+                                      Document date:
+                                    </span>{" "}
+                                    {
+                                      record.document_date ||
+                                      "Not recorded"
                                     }
                                   </p>
                                 </div>
-                              )}
+
+                                {record.description && (
+                                  <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-500">
+                                    {
+                                      record.description
+                                    }
+                                  </p>
+                                )}
+                              </div>
+
+                              <div className="w-full lg:max-w-md">
+                                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                                    Linked documents
+                                  </p>
+
+                                  {record.linked_documents.length >
+                                  0 ? (
+                                    <div className="mt-3 space-y-3">
+                                      {record.linked_documents.map(
+                                        (document) => (
+                                          <div
+                                            key={
+                                              document.id
+                                            }
+                                            className="rounded-lg border border-slate-200 bg-white p-3"
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <span className="font-bold text-blue-700">
+                                                {
+                                                  document.document_code
+                                                }
+                                              </span>
+
+                                              <StatusBadge
+                                                status={
+                                                  document.status
+                                                }
+                                              />
+                                            </div>
+
+                                            <p className="mt-1 break-words text-sm font-medium text-slate-700">
+                                              {
+                                                document.filename
+                                              }
+                                            </p>
+
+                                            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+                                              {document.year && (
+                                                <span>
+                                                  Year:{" "}
+                                                  {
+                                                    document.year
+                                                  }
+                                                </span>
+                                              )}
+
+                                              {document.document_date && (
+                                                <span>
+                                                  Date:{" "}
+                                                  {
+                                                    document.document_date
+                                                  }
+                                                </span>
+                                              )}
+
+                                              {document.file_type && (
+                                                <span>
+                                                  {
+                                                    document.file_type
+                                                  }
+                                                </span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        )
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <p className="mt-2 text-sm text-slate-500">
+                                      No document is currently linked to
+                                      this metadata record.
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         )
                       )}
 
-                    {searchTerm &&
-                      filteredMetadata.length ===
+                    {!searchLoading &&
+                      !searchError &&
+                      searchTerm.trim() &&
+                      searchResults.length ===
                         0 && (
                         <div className="p-12 text-center">
-                          <p className="font-semibold">
+                          <div
+                            aria-hidden="true"
+                            className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-lg"
+                          >
+                            ⌕
+                          </div>
+
+                          <p className="mt-4 font-semibold">
                             No matching records
                           </p>
 
                           <p className="mt-2 text-sm text-slate-500">
-                            Try a different reference, name, title or
-                            department.
+                            Try a document code, reference code,
+                            person, title, department, section or
+                            document type.
                           </p>
                         </div>
                       )}
 
-                    {!searchTerm && (
-                      <div className="p-12 text-center">
-                        <div
-                          aria-hidden="true"
-                          className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-lg"
-                        >
-                          ⌕
+                    {!searchLoading &&
+                      !searchError &&
+                      !searchTerm.trim() && (
+                        <div className="p-12 text-center">
+                          <div
+                            aria-hidden="true"
+                            className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-lg"
+                          >
+                            ⌕
+                          </div>
+
+                          <p className="mt-4 font-semibold">
+                            Search your records
+                          </p>
+
+                          <p className="mt-2 text-sm text-slate-500">
+                            Search by document code, reference code,
+                            person, title, department, section,
+                            document type, year or status.
+                          </p>
                         </div>
-
-                        <p className="mt-4 font-semibold">
-                          Search your records
-                        </p>
-
-                        <p className="mt-2 text-sm text-slate-500">
-                          Search by reference code, person, document title,
-                          department or document type.
-                        </p>
-                      </div>
-                    )}
+                      )}
                   </div>
                 </section>
               </>
             )}
 
-            {/* ===================================================== */}
-            {/* DEPARTMENTS */}
-            {/* ===================================================== */}
-            {departmentModalOpen && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4"
-                role="presentation"
-                onMouseDown={(event) => {
-                  if (
-                    event.target ===
-                    event.currentTarget
-                  ) {
-                    closeDepartmentModal();
-                  }
-                }}
-              >
-                <div
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="department-modal-title"
-                  className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                        Department management
-                      </p>
 
-                      <h2
-                        id="department-modal-title"
-                        className="mt-1 text-xl font-bold text-slate-900"
-                      >
-                        {departmentEditingId === null
-                          ? "Add Department"
-                          : "Edit Department"}
-                      </h2>
-
-                      <p className="mt-2 text-sm text-slate-500">
-                        {departmentEditingId === null
-                          ? "Create a department for organizing institutional records."
-                          : "Update the department details used throughout the system."}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={closeDepartmentModal}
-                      disabled={departmentSaving}
-                      aria-label="Close department dialog"
-                      className="rounded-lg p-2 text-xl leading-none text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      ×
-                    </button>
-                  </div>
-
-                  <div className="mt-6 space-y-5">
-                    <div>
-                      <label
-                        htmlFor="department-name"
-                        className="block text-sm font-semibold text-slate-700"
-                      >
-                        Department Name
-                      </label>
-
-                      <input
-                        id="department-name"
-                        type="text"
-                        value={departmentForm.name}
-                        onChange={(event) =>
-                          setDepartmentForm(
-                            (current) => ({
-                              ...current,
-                              name:
-                                event.target.value,
-                            })
-                          )
-                        }
-                        disabled={departmentSaving}
-                        autoFocus
-                        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50"
-                        placeholder="e.g. Human Resources"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="department-code"
-                        className="block text-sm font-semibold text-slate-700"
-                      >
-                        Department Code
-                      </label>
-
-                      <input
-                        id="department-code"
-                        type="text"
-                        value={departmentForm.code}
-                        onChange={(event) =>
-                          setDepartmentForm(
-                            (current) => ({
-                              ...current,
-                              code:
-                                event.target.value.toUpperCase(),
-                            })
-                          )
-                        }
-                        disabled={departmentSaving}
-                        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium uppercase text-slate-900 outline-none transition placeholder:normal-case placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50"
-                        placeholder="e.g. HR"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="department-description"
-                        className="block text-sm font-semibold text-slate-700"
-                      >
-                        Description
-                      </label>
-
-                      <textarea
-                        id="department-description"
-                        rows={4}
-                        value={departmentForm.description}
-                        onChange={(event) =>
-                          setDepartmentForm(
-                            (current) => ({
-                              ...current,
-                              description:
-                                event.target.value,
-                            })
-                          )
-                        }
-                        disabled={departmentSaving}
-                        className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:bg-slate-50"
-                        placeholder="Describe the department's role..."
-                      />
-                    </div>
-
-                    {departmentMutationError && (
-                      <p
-                        role="alert"
-                        className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700"
-                      >
-                        {departmentMutationError}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="mt-6 flex items-center justify-between gap-3">
-                    <div>
-                      {departmentEditingId !== null && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const department =
-                              departments.find(
-                                (item) =>
-                                  item.id ===
-                                  departmentEditingId
-                              );
-
-                            if (!department) {
-                              setDepartmentMutationError(
-                                "Unable to find the department to delete."
-                              );
-                              return;
-                            }
-
-                            const deleted =
-                              await deleteDepartment(
-                                department
-                              );
-
-                            if (deleted) {
-                              closeDepartmentModal();
-                            }
-                          }}
-                          disabled={departmentSaving}
-                          className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-600 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Delete Department
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="flex gap-3">
-                      <button
-                        type="button"
-                        onClick={closeDepartmentModal}
-                        disabled={departmentSaving}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Cancel
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={saveDepartment}
-                        disabled={departmentSaving}
-                        aria-busy={departmentSaving}
-                        className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {departmentSaving
-                          ? "Saving..."
-                          : departmentEditingId === null
-                            ? "Create Department"
-                            : "Save Changes"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
 
 
             {activePage ===
@@ -4432,6 +4490,12 @@ function SettingRow({
     </div>
   );
 }
+
+
+
+
+
+
 
 
 
