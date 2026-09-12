@@ -8,6 +8,7 @@ import fs from "fs";
 import { Pool, type PoolClient } from "pg";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
+import { ocrPdf } from "./services/ocr.js";
 import { randomBytes, createHash, scrypt as scryptCallback, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 
@@ -1227,7 +1228,6 @@ async function extractDocx(
     result.value || ""
   ).trim();
 }
-
 async function extractDocumentContent(
   filePath: string,
   extension: string,
@@ -1239,6 +1239,31 @@ async function extractDocumentContent(
     text = await extractPdf(
       filePath
     );
+
+    const initialText =
+      text.trim();
+
+    if (initialText.length < 100) {
+      try {
+        const ocrResult =
+          await ocrPdf(
+            filePath
+          );
+
+        if (
+          ocrResult.text.trim().length >
+          initialText.length
+        ) {
+          text =
+            ocrResult.text;
+        }
+      } catch (error) {
+        console.error(
+          "PDF OCR fallback failed:",
+          error
+        );
+      }
+    }
   } else if (
     extension === ".docx"
   ) {
@@ -1285,6 +1310,7 @@ async function extractDocumentContent(
     referenceCode,
   };
 }
+
 
 function calculateFieldMatch(
   documentText: string,

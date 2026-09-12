@@ -255,7 +255,7 @@ export default function Home() {
 
   const refreshDepartments = async () => {
     const response =
-      await fetch(`${API_URL}/api/departments`);
+      await fetch(`${API_URL}/api/departments`, { credentials: "include" });
 
     const data =
       await response.json();
@@ -666,11 +666,11 @@ const openDepartmentRecords = (
         typesResponse,
         documentsResponse,
       ] = await Promise.all([
-        fetch(`${API_URL}/api/dashboard`),
-        fetch(`${API_URL}/api/metadata`),
-        fetch(`${API_URL}/api/departments`),
-        fetch(`${API_URL}/api/document-types`),
-        fetch(`${API_URL}/api/documents`),
+        fetch(`${API_URL}/api/dashboard`, { credentials: "include" }),
+        fetch(`${API_URL}/api/metadata`, { credentials: "include" }),
+        fetch(`${API_URL}/api/departments`, { credentials: "include" }),
+        fetch(`${API_URL}/api/document-types`, { credentials: "include" }),
+        fetch(`${API_URL}/api/documents`, { credentials: "include" }),
       ]);
 
       const [
@@ -913,7 +913,8 @@ const openDepartmentRecords = (
         `${API_URL}/api/metadata`,
         {
           method: "POST",
-          headers: {
+        credentials: "include",
+        headers: {
             "Content-Type":
               "application/json",
           },
@@ -1071,6 +1072,7 @@ const openDepartmentRecords = (
           {
             method: "POST",
             body: formData,
+            credentials: "include",
           }
         );
 
@@ -1215,6 +1217,7 @@ const openDepartmentRecords = (
       `${API_URL}/api/documents/${uploadedDocument.id}/review`,
       {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
