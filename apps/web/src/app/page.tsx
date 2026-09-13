@@ -1262,6 +1262,7 @@ const openDepartmentRecords = (
    * =============================================================
    */
 
+
   const handleOpenDocument = async (
   documentId: string | number
 ) => {
@@ -3164,11 +3165,19 @@ const selectedDepartmentDocuments =
                                     <div className="mt-3 space-y-3">
                                       {record.linked_documents.map(
                                         (document) => (
-                                          <div
+                                          <button
+                                            type="button"
                                             key={
                                               document.id
                                             }
-                                            className="rounded-lg border border-slate-200 bg-white p-3"
+                                            onClick={(event) => {
+                                              event.stopPropagation();
+
+                                              void handleOpenDocument(
+                                                document.id
+                                              );
+                                            }}
+                                            className="block w-full rounded-lg border border-slate-200 bg-white p-3 text-left transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
                                           >
                                             <div className="flex flex-wrap items-center justify-between gap-2">
                                               <span className="font-bold text-blue-700">
@@ -3217,7 +3226,7 @@ const selectedDepartmentDocuments =
                                                 </span>
                                               )}
                                             </div>
-                                          </div>
+                                          </button>
                                         )
                                       )}
                                     </div>
