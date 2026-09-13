@@ -1765,6 +1765,7 @@ const dashboardFilteredDocuments =
         }
 
         return (
+          status === "REVIEW_REQUIRED" ||
           status === "NEEDS_REVIEW" ||
           status === "REVIEW"
         );
