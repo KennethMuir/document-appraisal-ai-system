@@ -2965,6 +2965,7 @@ app.get(
             doc.person_name,
             NULL::text AS description,
             NULL::text AS section,
+            NULL::jsonb AS additional_metadata,
             doc.status,
 
             d.id AS department_id,
@@ -6390,7 +6391,7 @@ app.post(
                 section,
                 status,
                 department_id,
-                document_type_id
+                document_type_id,
                 additional_metadata
               )
               VALUES (
@@ -6403,7 +6404,7 @@ app.post(
                 $7,
                 'DOCUMENT_LINKED',
                 $8,
-                $9
+                $9,
                 $10::jsonb
               )
               RETURNING *
@@ -6795,6 +6796,8 @@ app.listen(
     );
   }
 );
+
+
 
 
 

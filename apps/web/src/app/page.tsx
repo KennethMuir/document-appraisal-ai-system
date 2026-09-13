@@ -911,6 +911,17 @@ const openDepartmentRecords = (
   }, []);
 
   useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
+    if (!authUser) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      setSearchError("");
+      return;
+    }
+
     const query = searchTerm.trim();
 
     if (!query) {
@@ -980,7 +991,8 @@ const openDepartmentRecords = (
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [searchTerm]);
+  }, [searchTerm, authLoading, authUser]);
+
   const closeMetadataModal = () => {
     setShowMetadataModal(false);
   };
