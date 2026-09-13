@@ -52,6 +52,7 @@ type MetadataRecord = {
   description: string | null;
   section: string | null;
   status: string;
+  additional_metadata: Record<string, unknown> | null;
   department_name: string | null;
   document_type_name: string | null;
   linked_document_id: string | null;
@@ -555,8 +556,16 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
     description: "",
   });
 
+
+  const [expandedAdditionalMetadata, setExpandedAdditionalMetadata] =
+    useState<Set<string>>(new Set());
   const [appraisalAdditionalMetadata, setAppraisalAdditionalMetadata] =
     useState<AdditionalMetadataField[]>([]);
+
+  const [
+    appraisalCommittedAdditionalMetadata,
+    setAppraisalCommittedAdditionalMetadata,
+  ] = useState<AdditionalMetadataField[]>([]);
 
   const [reviewingDecision, setReviewingDecision] =
     useState(false);
@@ -1404,7 +1413,7 @@ const openDepartmentRecords = (
             data.metadata?.description ??
             "",
         });
-        setAppraisalAdditionalMetadata(
+        setAppraisalCommittedAdditionalMetadata(
           Object.entries(
             metadata?.additional_metadata ??
               data.metadata?.additional_metadata ??
@@ -1417,6 +1426,7 @@ const openDepartmentRecords = (
                 : String(value),
           }))
         );
+        setAppraisalAdditionalMetadata([]);
       } else {
         setUploadedAppraisal(null);
       }
@@ -1592,14 +1602,17 @@ const handleAppraisalReview = async (
               appraisalMetadataForm.section.trim() || null,
             description:
               appraisalMetadataForm.description.trim() || null,
-            additionalMetadata: Object.fromEntries(
-              appraisalAdditionalMetadata
-                .map((field) => [
-                  field.key.trim(),
-                  field.value.trim(),
-                ] as const)
-                .filter(([key]) => Boolean(key))
-            ),
+              additionalMetadata: Object.fromEntries(
+                [
+                  ...appraisalCommittedAdditionalMetadata,
+                  ...appraisalAdditionalMetadata,
+                ]
+                  .map((field) => [
+                    field.key.trim(),
+                    field.value.trim(),
+                  ] as const)
+                  .filter(([key]) => Boolean(key))
+              ),
           },
         }),
       }
@@ -2865,6 +2878,10 @@ const selectedDepartmentDocuments =
                             <th className="px-5 py-4 font-semibold">
                               Status
                             </th>
+                            <th className="px-5 py-4 font-semibold">
+                              Additional Metadata
+                            </th>
+
                           </tr>
                         </thead>
 
@@ -2938,6 +2955,53 @@ const selectedDepartmentDocuments =
                                       record.status
                                     }
                                   />
+                                </td>
+
+                                <td className="px-5 py-5 align-top">
+                                  {record.additional_metadata &&
+                                  Object.keys(record.additional_metadata).length > 0 ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setExpandedAdditionalMetadata((current) => {
+                                            const next = new Set(current);
+                                            if (next.has(record.id)) {
+                                              next.delete(record.id);
+                                            } else {
+                                              next.add(record.id);
+                                            }
+                                            return next;
+                                          });
+                                        }}
+                                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
+                                      >
+                                        {expandedAdditionalMetadata.has(record.id)
+                                          ? "Hide Additional Metadata"
+                                          : "Additional Metadata"}
+                                      </button>
+
+                                      {expandedAdditionalMetadata.has(record.id) && (
+                                        <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                          {Object.entries(record.additional_metadata).map(([key, value]) => (
+                                            <div
+                                              key={key}
+                                              className="text-xs text-slate-600"
+                                            >
+                                              <span className="font-semibold text-slate-700">
+                                                {key}:
+                                              </span>{" "}
+                                              {value === null || value === undefined || value === ""
+                                                ? "—"
+                                                : String(value)}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <span className="text-sm text-slate-400">—</span>
+                                  )}
                                 </td>
                               </tr>
                             )
@@ -5180,19 +5244,23 @@ const selectedDepartmentDocuments =
                             </button>
                           </div>
 
-                          {appraisalAdditionalMetadata.length > 0 && (
-                            <div className="mt-4 space-y-3">
-                              {appraisalAdditionalMetadata.map(
+                          {appraisalCommittedAdditionalMetadata.length > 0 && (
+                            <div className="mt-4 space-y-2">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Added Metadata
+                              </p>
+
+                              {appraisalCommittedAdditionalMetadata.map(
                                 (field, index) => (
                                   <div
-                                    key={index}
+                                    key={"committed-" + index}
                                     className="grid gap-3 sm:grid-cols-[1fr_1.5fr_auto]"
                                   >
                                     <input
                                       type="text"
                                       value={field.key}
                                       onChange={(event) =>
-                                        setAppraisalAdditionalMetadata(
+                                        setAppraisalCommittedAdditionalMetadata(
                                           (current) =>
                                             current.map(
                                               (item, itemIndex) =>
@@ -5213,7 +5281,7 @@ const selectedDepartmentDocuments =
                                       type="text"
                                       value={field.value}
                                       onChange={(event) =>
-                                        setAppraisalAdditionalMetadata(
+                                        setAppraisalCommittedAdditionalMetadata(
                                           (current) =>
                                             current.map(
                                               (item, itemIndex) =>
@@ -5230,64 +5298,141 @@ const selectedDepartmentDocuments =
                                       className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
                                     />
 
-                                    <div className="flex items-center gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setAppraisalAdditionalMetadata(
-                                            (current) => {
-                                              const next = [...current];
-                                              const field = next[index];
-
-                                              if (!field) {
-                                                return next;
-                                              }
-
-                                              const key = field.key.trim();
-                                              const value = field.value.trim();
-
-                                              if (!key) {
-                                                return next;
-                                              }
-
-                                              next[index] = {
-                                                key,
-                                                value,
-                                              };
-
-                                              next.splice(index + 1, 0, {
-                                                key: "",
-                                                value: "",
-                                              });
-
-                                              return next;
-                                            }
-                                          )
-                                        }
-                                        className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
-                                      >
-                                        + Add
-                                      </button>
-
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setAppraisalAdditionalMetadata(
-                                            (current) =>
-                                              current.filter(
-                                                (_, itemIndex) =>
-                                                  itemIndex !== index
-                                              )
-                                          )
-                                        }
-                                        className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-red-600"
-                                      >
-                                        Remove
-                                      </button>
-                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setAppraisalCommittedAdditionalMetadata(
+                                          (current) =>
+                                            current.filter(
+                                              (_, itemIndex) =>
+                                                itemIndex !== index
+                                            )
+                                        )
+                                      }
+                                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-red-600"
+                                    >
+                                      Remove
+                                    </button>
                                   </div>
                                 )
                               )}
+                            </div>
+                          )}
+
+                          {appraisalAdditionalMetadata.length > 0 && (
+                            <div className="mt-4">
+                              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                New Metadata Field
+                              </p>
+
+                              <div className="space-y-3">
+                                {appraisalAdditionalMetadata.map(
+                                  (field, index) => (
+                                    <div
+                                      key={"draft-" + index}
+                                      className="grid gap-3 sm:grid-cols-[1fr_1.5fr_auto]"
+                                    >
+                                      <input
+                                        type="text"
+                                        value={field.key}
+                                        onChange={(event) =>
+                                          setAppraisalAdditionalMetadata(
+                                            (current) =>
+                                              current.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        key: event.target.value,
+                                                      }
+                                                    : item
+                                              )
+                                          )
+                                        }
+                                        placeholder="Field name"
+                                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                                      />
+
+                                      <input
+                                        type="text"
+                                        value={field.value}
+                                        onChange={(event) =>
+                                          setAppraisalAdditionalMetadata(
+                                            (current) =>
+                                              current.map(
+                                                (item, itemIndex) =>
+                                                  itemIndex === index
+                                                    ? {
+                                                        ...item,
+                                                        value: event.target.value,
+                                                      }
+                                                    : item
+                                              )
+                                          )
+                                        }
+                                        placeholder="Value"
+                                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                                      />
+
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const fieldKey = field.key.trim();
+                                            const fieldValue = field.value.trim();
+
+                                            if (!fieldKey) {
+                                              return;
+                                            }
+
+                                            setAppraisalCommittedAdditionalMetadata(
+                                              (current) => [
+                                                ...current,
+                                                {
+                                                  key: fieldKey,
+                                                  value: fieldValue,
+                                                },
+                                              ]
+                                            );
+
+                                            setAppraisalAdditionalMetadata(
+                                              (current) =>
+                                                current.map(
+                                                  (item, itemIndex) =>
+                                                    itemIndex === index
+                                                      ? {
+                                                          key: "",
+                                                          value: "",
+                                                        }
+                                                      : item
+                                                )
+                                            );
+                                          }}
+                                          className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                                        >
+                                          + Add
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setAppraisalAdditionalMetadata(
+                                              (current) =>
+                                                current.filter(
+                                                  (_, itemIndex) =>
+                                                    itemIndex !== index
+                                                )
+                                            )
+                                          }
+                                          className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-red-600"
+                                        >
+                                          Remove
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -5848,3 +5993,5 @@ function SettingRow({
     </div>
   );
 }
+
+
