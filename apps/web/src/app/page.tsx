@@ -1190,7 +1190,92 @@ const openDepartmentRecords = (
    * =============================================================
    */
 
-  const handleAppraisalReview = async (
+  const handleOpenDocument = async (
+  documentId: string | number
+) => {
+  const numericDocumentId =
+    Number(documentId);
+
+  if (
+    !Number.isInteger(numericDocumentId) ||
+    numericDocumentId <= 0
+  ) {
+    return;
+  }
+
+  const documentWindow =
+    window.open("", "_blank");
+
+  if (!documentWindow) {
+    setReviewError(
+      "Unable to open the document. Please allow pop-ups for this site and try again."
+    );
+    return;
+  }
+
+  documentWindow.document.title =
+    "Opening document...";
+
+  try {
+    setReviewError("");
+
+    const response = await fetch(
+      `${API_URL}/api/documents/${numericDocumentId}/file`,
+      {
+        method: "GET",
+        credentials: "include",
+      }
+    );
+
+    if (!response.ok) {
+      let errorMessage =
+        "Unable to open the document.";
+
+      try {
+        const data = await response.json();
+
+        if (
+          data &&
+          typeof data.error === "string" &&
+          data.error.trim()
+        ) {
+          errorMessage = data.error;
+        }
+      } catch {
+        // Non-JSON error response.
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    const blob =
+      await response.blob();
+
+    const objectUrl =
+      URL.createObjectURL(blob);
+
+    documentWindow.location.href =
+      objectUrl;
+
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 60_000);
+  } catch (error) {
+    documentWindow.close();
+
+    console.error(
+      "Document opening failed:",
+      error
+    );
+
+    setReviewError(
+      error instanceof Error
+        ? error.message
+        : "Unable to open the document."
+    );
+  }
+};
+const handleAppraisalReview = async (
   decision: "APPROVE" | "REJECT"
 ) => {
     if (!canManageDocuments) {
@@ -2486,6 +2571,9 @@ const selectedDepartmentDocuments =
                             <th className="px-5 py-4 font-semibold">
                               Status
                             </th>
+                            <th className="px-5 py-4 text-right font-semibold">
+                              Action
+                            </th>
                           </tr>
                         </thead>
 
@@ -2534,6 +2622,26 @@ const selectedDepartmentDocuments =
                                       "UNKNOWN"
                                     }
                                   />
+                                </td>
+                                <td className="px-5 py-5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (document.id == null) {
+                                        setReviewError(
+                                          "This document does not have a valid document ID."
+                                        );
+                                        return;
+                                      }
+
+                                      handleOpenDocument(
+                                        document.id
+                                      );
+                                    }}
+                                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                                  >
+                                    Open
+                                  </button>
                                 </td>
                               </tr>
                             )
