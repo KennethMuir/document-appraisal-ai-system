@@ -37,6 +37,11 @@ type DocumentType = {
   description: string;
 };
 
+type AdditionalMetadataField = {
+  key: string;
+  value: string;
+};
+
 type MetadataRecord = {
   id: string;
   reference_code: string;
@@ -136,6 +141,7 @@ type UploadedAppraisal = {
     department_code?: string | null;
     document_type_id?: string | number | null;
     document_type_name?: string | null;
+    additional_metadata?: Record<string, unknown> | null;
   } | null;
   metadataConflicts?: Array<{
     field: string;
@@ -204,6 +210,7 @@ const EMPTY_FORM = {
   documentDate: "",
   section: "",
   description: "",
+  additionalMetadata: [] as AdditionalMetadataField[],
 };
 
 export default function Home() {
@@ -261,6 +268,30 @@ export default function Home() {
 
   const [metadata, setMetadata] =
     useState<MetadataRecord[]>([]);
+
+  const [showBulkMetadataModal, setShowBulkMetadataModal] =
+    useState(false);
+
+  const [bulkMetadataFile, setBulkMetadataFile] =
+    useState<File | null>(null);
+
+  const [bulkMetadataPreview, setBulkMetadataPreview] =
+    useState<{
+      totalRows: number;
+      rows: Array<Record<string, unknown>>;
+      existingReferenceCodes: string[];
+      canImport: boolean;
+      truncated: boolean;
+    } | null>(null);
+
+  const [bulkMetadataError, setBulkMetadataError] =
+    useState("");
+
+  const [bulkMetadataLoading, setBulkMetadataLoading] =
+    useState(false);
+
+  const [bulkMetadataImporting, setBulkMetadataImporting] =
+    useState(false);
 
   const [departments, setDepartments] =
     useState<Department[]>([]);
@@ -523,6 +554,9 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
     section: "",
     description: "",
   });
+
+  const [appraisalAdditionalMetadata, setAppraisalAdditionalMetadata] =
+    useState<AdditionalMetadataField[]>([]);
 
   const [reviewingDecision, setReviewingDecision] =
     useState(false);
@@ -951,6 +985,137 @@ const openDepartmentRecords = (
     setShowMetadataModal(false);
   };
 
+  const closeBulkMetadataModal = () => {
+    if (bulkMetadataLoading || bulkMetadataImporting) {
+      return;
+    }
+
+    setShowBulkMetadataModal(false);
+    setBulkMetadataFile(null);
+    setBulkMetadataPreview(null);
+    setBulkMetadataError("");
+  };
+
+  const downloadBulkMetadataTemplate = () => {
+    const csv = [
+      "reference_code,person_name,title,department,document_type,year,document_date,section,description,contract_number,employee_number,expiry_date",
+      "DOC-EXAMPLE-001,Jane Doe,Example Document,Finance,Contract,2026,2026-01-15,Section A,Example metadata record,CNT-2026-001,EMP-00001,2028-06-30"
+    ].join("\\r\\n");
+
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;"
+    });
+
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "metadata-upload-template.csv";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleBulkMetadataPreview = async () => {
+    if (!canManageMetadata || !bulkMetadataFile) {
+      return;
+    }
+
+    setBulkMetadataLoading(true);
+    setBulkMetadataError("");
+    setBulkMetadataPreview(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", bulkMetadataFile);
+
+      const response = await fetch(
+        `${API_URL}/api/metadata/bulk?preview=true`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          Array.isArray(data.errors)
+            ? data.errors.join("\\n")
+            : data.error || "Unable to preview bulk metadata."
+        );
+      }
+
+      setBulkMetadataPreview({
+        totalRows: Number(data.totalRows || 0),
+        rows: Array.isArray(data.rows) ? data.rows : [],
+        existingReferenceCodes:
+          Array.isArray(data.existingReferenceCodes)
+            ? data.existingReferenceCodes
+            : [],
+        canImport: data.canImport !== false,
+        truncated: data.truncated === true,
+      });
+    } catch (error) {
+      setBulkMetadataError(
+        error instanceof Error
+          ? error.message
+          : "Unable to preview bulk metadata."
+      );
+    } finally {
+      setBulkMetadataLoading(false);
+    }
+  };
+
+  const handleBulkMetadataImport = async () => {
+    if (!canManageMetadata || !bulkMetadataFile || !bulkMetadataPreview?.canImport) {
+      return;
+    }
+
+    setBulkMetadataImporting(true);
+    setBulkMetadataError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", bulkMetadataFile);
+
+      const response = await fetch(
+        `${API_URL}/api/metadata/bulk`,
+        {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(
+          Array.isArray(data.errors)
+            ? data.errors.join("\\n")
+            : data.error || "Unable to import metadata."
+        );
+      }
+
+      closeBulkMetadataModal();
+      await loadData();
+      window.alert(
+        `${Number(data.importedCount || data.count || bulkMetadataPreview.totalRows)} metadata records imported successfully.`
+      );
+    } catch (error) {
+      setBulkMetadataError(
+        error instanceof Error
+          ? error.message
+          : "Unable to import metadata."
+      );
+    } finally {
+      setBulkMetadataImporting(false);
+    }
+  };
+
   const closeUploadModal = () => {
     if (uploading) {
       return;
@@ -1227,6 +1392,19 @@ const openDepartmentRecords = (
             data.metadata?.description ??
             "",
         });
+        setAppraisalAdditionalMetadata(
+          Object.entries(
+            metadata?.additional_metadata ??
+              data.metadata?.additional_metadata ??
+              {}
+          ).map(([key, value]) => ({
+            key,
+            value:
+              value === null || value === undefined
+                ? ""
+                : String(value),
+          }))
+        );
       } else {
         setUploadedAppraisal(null);
       }
@@ -2552,6 +2730,16 @@ const selectedDepartmentDocuments =
                   >
                     + Register Metadata
                   </button>
+
+                  {canManageMetadata && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBulkMetadataModal(true)}
+                      className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+                    >
+                      Bulk Upload Metadata
+                    </button>
+                  )}
                 </div>
 
                 <div className="mb-5 flex items-center gap-3">
@@ -3832,6 +4020,162 @@ const selectedDepartmentDocuments =
 {/* METADATA MODAL */}
       {/* =========================================================== */}
 
+      {/* BULK METADATA UPLOAD */}
+      {showBulkMetadataModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-metadata-title"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Metadata Registry
+                </p>
+                <h2 id="bulk-metadata-title" className="mt-1 text-xl font-bold text-slate-900">
+                  Bulk Upload Metadata
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Upload CSV or XLSX metadata, review validation, then confirm the import.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeBulkMetadataModal}
+                className="rounded-lg px-3 py-2 text-sm font-semibold text-slate-500 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-5 p-6">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={downloadBulkMetadataTemplate}
+                  className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Download Template
+                </button>
+
+                <label className="cursor-pointer rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+                  Choose CSV / XLSX
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0] ?? null;
+                      setBulkMetadataFile(file);
+                      setBulkMetadataPreview(null);
+                      setBulkMetadataError("");
+                    }}
+                  />
+                </label>
+
+                {bulkMetadataFile && (
+                  <span className="text-sm text-slate-600">
+                    {bulkMetadataFile.name}
+                  </span>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                <p className="font-semibold text-slate-800">Required column</p>
+                <p className="mt-1">reference_code</p>
+                <p className="mt-2 font-semibold text-slate-800">Optional columns</p>
+                <p className="mt-1">person_name, title, department, document_type, year, document_date, section, description</p>
+                <p className="mt-2">Any other columns are preserved as additional metadata.</p>
+              </div>
+
+              {bulkMetadataError && (
+                <div className="whitespace-pre-wrap rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  {bulkMetadataError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeBulkMetadataModal}
+                  disabled={bulkMetadataLoading || bulkMetadataImporting}
+                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkMetadataPreview}
+                  disabled={!bulkMetadataFile || bulkMetadataLoading || bulkMetadataImporting}
+                  className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {bulkMetadataLoading ? "Validating..." : "Preview Upload"}
+                </button>
+              </div>
+
+              {bulkMetadataPreview && (
+                <div className="overflow-hidden rounded-2xl border border-slate-200">
+                  <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
+                    <p className="font-semibold text-slate-900">
+                      Preview: {bulkMetadataPreview.totalRows} row(s)
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {bulkMetadataPreview.truncated ? "Showing the first 100 rows." : "All rows are shown."}
+                    </p>
+                    {bulkMetadataPreview.existingReferenceCodes.length > 0 && (
+                      <p className="mt-2 text-sm font-semibold text-red-600">
+                        Existing references: {bulkMetadataPreview.existingReferenceCodes.join(", ")}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="max-h-80 overflow-auto">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="sticky top-0 bg-white shadow-sm">
+                        <tr className="border-b border-slate-200">
+                          <th className="px-4 py-3 font-semibold text-slate-700">Row</th>
+                          <th className="px-4 py-3 font-semibold text-slate-700">Reference</th>
+                          <th className="px-4 py-3 font-semibold text-slate-700">Title</th>
+                          <th className="px-4 py-3 font-semibold text-slate-700">Person</th>
+                          <th className="px-4 py-3 font-semibold text-slate-700">Year</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bulkMetadataPreview.rows.map((row, index) => (
+                          <tr key={`${String(row.referenceCode ?? "row")}-${index}`} className="border-b border-slate-100">
+                            <td className="px-4 py-3 text-slate-500">{String(row.rowNumber ?? index + 1)}</td>
+                            <td className="px-4 py-3 font-medium text-slate-900">{String(row.referenceCode ?? "")}</td>
+                            <td className="px-4 py-3 text-slate-700">{String(row.title ?? "")}</td>
+                            <td className="px-4 py-3 text-slate-700">{String(row.personName ?? "")}</td>
+                            <td className="px-4 py-3 text-slate-700">{String(row.year ?? "")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-5 py-4">
+                    <button
+                      type="button"
+                      onClick={handleBulkMetadataImport}
+                      disabled={!bulkMetadataPreview.canImport || bulkMetadataImporting}
+                      className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {bulkMetadataImporting ? "Importing..." : "Confirm Import"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showMetadataModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -4134,6 +4478,122 @@ const selectedDepartmentDocuments =
                 />
               </div>
 
+              <div
+                id="manual-additional-metadata"
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-5"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      Additional Metadata
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Add document-specific fields that are not part of the standard metadata.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        additionalMetadata: [
+                          ...current.additionalMetadata,
+                          {
+                            key: "",
+                            value: "",
+                          },
+                        ],
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                  >
+                    + Add Field
+                  </button>
+                </div>
+
+                {form.additionalMetadata.length > 0 && (
+                  <div className="mt-4 space-y-3">
+                    {form.additionalMetadata.map(
+                      (field: AdditionalMetadataField, index: number) => (
+                        <div
+                          key={`${index}-${field.key}`}
+                          className="grid gap-3 md:grid-cols-[1fr_1fr_auto]"
+                        >
+                          <input
+                            type="text"
+                            value={field.key}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                additionalMetadata:
+                                  current.additionalMetadata.map(
+                                    (
+                                      item: AdditionalMetadataField,
+                                      itemIndex: number
+                                    ) =>
+                                      itemIndex === index
+                                        ? {
+                                            ...item,
+                                            key: event.target.value,
+                                          }
+                                        : item
+                                  ),
+                              }))
+                            }
+                            placeholder="Field name e.g. Contract Number"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          />
+
+                          <input
+                            type="text"
+                            value={field.value}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                additionalMetadata:
+                                  current.additionalMetadata.map(
+                                    (
+                                      item: AdditionalMetadataField,
+                                      itemIndex: number
+                                    ) =>
+                                      itemIndex === index
+                                        ? {
+                                            ...item,
+                                            value: event.target.value,
+                                          }
+                                        : item
+                                  ),
+                              }))
+                            }
+                            placeholder="Value"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setForm((current) => ({
+                                ...current,
+                                additionalMetadata:
+                                  current.additionalMetadata.filter(
+                                    (
+                                      _item: AdditionalMetadataField,
+                                      itemIndex: number
+                                    ) => itemIndex !== index
+                                  ),
+                              }))
+                            }
+                            className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
               <div className="flex justify-end gap-3 border-t border-slate-200 pt-5">
                 <button
                   type="button"
@@ -4668,6 +5128,108 @@ const selectedDepartmentDocuments =
                               className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
                             />
                           </label>
+                        </div>
+
+                        <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <h4 className="text-sm font-bold text-slate-900">
+                                Additional Metadata
+                              </h4>
+                              <p className="mt-1 text-xs leading-5 text-slate-500">
+                                Add document-specific fields discovered during
+                                appraisal. These are saved with the metadata
+                                record when you approve or create it.
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAppraisalAdditionalMetadata((current) => [
+                                  ...current,
+                                  {
+                                    key: "",
+                                    value: "",
+                                  },
+                                ])
+                              }
+                              className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                            >
+                              + Add Field
+                            </button>
+                          </div>
+
+                          {appraisalAdditionalMetadata.length > 0 && (
+                            <div className="mt-4 space-y-3">
+                              {appraisalAdditionalMetadata.map(
+                                (field, index) => (
+                                  <div
+                                    key={index}
+                                    className="grid gap-3 sm:grid-cols-[1fr_1.5fr_auto]"
+                                  >
+                                    <input
+                                      type="text"
+                                      value={field.key}
+                                      onChange={(event) =>
+                                        setAppraisalAdditionalMetadata(
+                                          (current) =>
+                                            current.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      key: event.target.value,
+                                                    }
+                                                  : item
+                                            )
+                                        )
+                                      }
+                                      placeholder="Field name"
+                                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                                    />
+
+                                    <input
+                                      type="text"
+                                      value={field.value}
+                                      onChange={(event) =>
+                                        setAppraisalAdditionalMetadata(
+                                          (current) =>
+                                            current.map(
+                                              (item, itemIndex) =>
+                                                itemIndex === index
+                                                  ? {
+                                                      ...item,
+                                                      value: event.target.value,
+                                                    }
+                                                  : item
+                                            )
+                                        )
+                                      }
+                                      placeholder="Value"
+                                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-500"
+                                    />
+
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setAppraisalAdditionalMetadata(
+                                          (current) =>
+                                            current.filter(
+                                              (_, itemIndex) =>
+                                                itemIndex !== index
+                                            )
+                                        )
+                                      }
+                                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-red-600"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                       {matchedMetadata && (

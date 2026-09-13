@@ -4059,6 +4059,49 @@ app.post(
         });
       }
 
+      const existingReferenceResult = await pool.query(
+        `
+          SELECT reference_code
+          FROM metadata_records
+          WHERE LOWER(reference_code) = ANY($1::text[])
+        `,
+        [Array.from(uploadedReferences)]
+      );
+
+      const existingReferenceCodes =
+        existingReferenceResult.rows.map((row) =>
+          String(row.reference_code)
+        );
+
+      const previewRequested =
+        String(req.query.preview ?? "")
+          .trim()
+          .toLowerCase() === "true";
+
+      if (previewRequested) {
+        return res.status(200).json({
+          success: true,
+          preview: true,
+          totalRows: preparedRows.length,
+          rows: preparedRows.slice(0, 100).map((row) => ({
+            rowNumber: row.rowNumber,
+            referenceCode: row.referenceCode,
+            title: row.title,
+            personName: row.personName,
+            departmentId: row.departmentId,
+            documentTypeId: row.documentTypeId,
+            section: row.section,
+            year: row.year,
+            documentDate: row.documentDate,
+            description: row.description,
+            additionalMetadata: row.additionalMetadata,
+          })),
+          existingReferenceCodes,
+          canImport: existingReferenceCodes.length === 0,
+          truncated: preparedRows.length > 100,
+        });
+      }
+
       const client =
         await pool.connect();
 
