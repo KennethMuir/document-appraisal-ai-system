@@ -93,6 +93,14 @@ type AuthUser = {
   role: "ADMIN" | "APPRAISER" | "VIEWER";
   isActive: boolean;
 };
+type UserManagementUser = {
+  id: number;
+  email: string;
+  fullName: string | null;
+  role: "ADMIN" | "APPRAISER" | "VIEWER";
+  isActive: boolean;
+  createdAt: string;
+};
 
 type UploadedDocument = {
   [key: string]: unknown;
@@ -201,6 +209,12 @@ const EMPTY_FORM = {
 export default function Home() {
   const [activePage, setActivePage] = useState("Dashboard");
 
+  const [dashboardDocumentFilter, setDashboardDocumentFilter] =
+    useState<"ALL" | "LINKED" | "UNLINKED" | "REVIEW">("ALL");
+
+  const [dashboardMetadataFilter, setDashboardMetadataFilter] =
+    useState<"ALL" | "AWAITING_DOCUMENT">("ALL");
+
   const [authUser, setAuthUser] =
     useState<AuthUser | null>(null);
 
@@ -225,6 +239,25 @@ export default function Home() {
     authUser?.role === "ADMIN";
   const [statistics, setStatistics] =
     useState<Statistics | null>(null);
+  const [
+    userManagementUsers,
+    setUserManagementUsers,
+  ] = useState<UserManagementUser[]>([]);
+
+  const [
+    userManagementLoading,
+    setUserManagementLoading,
+  ] = useState(false);
+
+  const [
+    userManagementError,
+    setUserManagementError,
+  ] = useState("");
+
+  const [
+    updatingUserId,
+    setUpdatingUserId,
+  ] = useState<number | null>(null);
 
   const [metadata, setMetadata] =
     useState<MetadataRecord[]>([]);
@@ -557,6 +590,45 @@ const openDepartmentRecords = (
     if (!statistics) return "—";
 
     return statistics[key] ?? "—";
+  };
+
+  const handleDashboardStatCardClick = (
+    key: (typeof statCards)[number]["key"]
+  ) => {
+    setSelectedDepartmentId(null);
+    setSearchTerm("");
+
+    switch (key) {
+      case "documents":
+        setDashboardDocumentFilter("ALL");
+        setActivePage("Documents");
+        break;
+
+      case "metadata":
+        setDashboardMetadataFilter("ALL");
+        setActivePage("Metadata Registry");
+        break;
+
+      case "awaiting":
+        setDashboardMetadataFilter("AWAITING_DOCUMENT");
+        setActivePage("Metadata Registry");
+        break;
+
+      case "review":
+        setDashboardDocumentFilter("REVIEW");
+        setActivePage("Documents");
+        break;
+
+      case "linked":
+        setDashboardDocumentFilter("LINKED");
+        setActivePage("Documents");
+        break;
+
+      case "unlinked":
+        setDashboardDocumentFilter("UNLINKED");
+        setActivePage("Documents");
+        break;
+    }
   };
 
   const formatDate = (
@@ -1423,6 +1495,142 @@ const handleAppraisalReview = async (
   }
 };
 
+  const loadUserManagementUsers =
+    async () => {
+      if (authUser?.role !== "ADMIN") {
+        return;
+      }
+
+      try {
+        setUserManagementLoading(true);
+        setUserManagementError("");
+
+        const response =
+          await fetch(
+            `${API_URL}/api/users`,
+            {
+              method: "GET",
+              credentials: "include",
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data.error ||
+              "Unable to retrieve users."
+          );
+        }
+
+        setUserManagementUsers(
+          Array.isArray(data.users)
+            ? data.users
+            : []
+        );
+      } catch (error) {
+        console.error(
+          "User management load failed:",
+          error
+        );
+
+        setUserManagementUsers([]);
+
+        setUserManagementError(
+          error instanceof Error
+            ? error.message
+            : "Unable to retrieve users."
+        );
+      } finally {
+        setUserManagementLoading(false);
+      }
+    };
+
+  const updateManagedUser =
+    async (
+      userId: number,
+      changes: {
+        role?: "ADMIN" | "APPRAISER" | "VIEWER";
+        isActive?: boolean;
+      }
+    ) => {
+      if (authUser?.role !== "ADMIN") {
+        return;
+      }
+
+      try {
+        setUpdatingUserId(userId);
+        setUserManagementError("");
+
+        const response =
+          await fetch(
+            `${API_URL}/api/users/${userId}`,
+            {
+              method: "PATCH",
+              credentials: "include",
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+              body: JSON.stringify(
+                changes
+              ),
+            }
+          );
+
+        const data =
+          await response.json();
+
+        if (
+          !response.ok ||
+          !data.success
+        ) {
+          throw new Error(
+            data.error ||
+              "Unable to update user."
+          );
+        }
+
+        setUserManagementUsers(
+          (currentUsers) =>
+            currentUsers.map(
+              (user) =>
+                user.id === userId
+                  ? data.user
+                  : user
+            )
+        );
+      } catch (error) {
+        console.error(
+          "User update failed:",
+          error
+        );
+
+        setUserManagementError(
+          error instanceof Error
+            ? error.message
+            : "Unable to update user."
+        );
+      } finally {
+        setUpdatingUserId(null);
+      }
+    };
+
+  useEffect(() => {
+    if (
+      activePage === "Settings" &&
+      authUser?.role === "ADMIN"
+    ) {
+      void loadUserManagementUsers();
+    }
+  }, [
+    activePage,
+    authUser?.role,
+  ]);
   const logout = async () => {
     if (loggingOut) {
       return;
@@ -1481,6 +1689,13 @@ const handleAppraisalReview = async (
 
   const filteredMetadata =
     metadata.filter((record: MetadataRecord) => {
+      if (
+        dashboardMetadataFilter !== "ALL" &&
+        record.status !== dashboardMetadataFilter
+      ) {
+        return false;
+      }
+
       if (selectedDepartmentId !== null) {
         const department =
           departments.find(
@@ -1532,6 +1747,28 @@ const selectedDepartment =
           selectedDepartmentId
       ) ?? null
     : null;
+
+const dashboardFilteredDocuments =
+  dashboardDocumentFilter === "ALL"
+    ? documents
+    : documents.filter((document) => {
+        const status = String(
+          document.status ?? ""
+        ).toUpperCase();
+
+        if (dashboardDocumentFilter === "LINKED") {
+          return status === "LINKED";
+        }
+
+        if (dashboardDocumentFilter === "UNLINKED") {
+          return status === "UNLINKED";
+        }
+
+        return (
+          status === "NEEDS_REVIEW" ||
+          status === "REVIEW"
+        );
+      });
 
 const selectedDepartmentDocuments =
   selectedDepartmentId !== null
@@ -1887,7 +2124,52 @@ const selectedDepartmentDocuments =
                         key={
                           card.key
                         }
-                        className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() =>
+                          handleDashboardStatCardClick(
+                            card.key
+                          )
+                        }
+                        onKeyDown={(event) => {
+                          if (
+                            event.key === "Enter" ||
+                            event.key === " "
+                          ) {
+                            event.preventDefault();
+                            handleDashboardStatCardClick(
+                              card.key
+                            );
+                          }
+                        }}
+                        className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 ${
+                          (
+                            card.key === "documents" &&
+                            dashboardDocumentFilter === "ALL"
+                          ) ||
+                          (
+                            card.key === "metadata" &&
+                            dashboardMetadataFilter === "ALL"
+                          ) ||
+                          (
+                            card.key === "awaiting" &&
+                            dashboardMetadataFilter === "AWAITING_DOCUMENT"
+                          ) ||
+                          (
+                            card.key === "review" &&
+                            dashboardDocumentFilter === "REVIEW"
+                          ) ||
+                          (
+                            card.key === "linked" &&
+                            dashboardDocumentFilter === "LINKED"
+                          ) ||
+                          (
+                            card.key === "unlinked" &&
+                            dashboardDocumentFilter === "UNLINKED"
+                          )
+                            ? "border-slate-900 ring-1 ring-slate-900"
+                            : "border-slate-200"
+                        }`}
                       >
                         <div className="flex items-start justify-between">
                           <div>
@@ -2502,7 +2784,13 @@ const selectedDepartmentDocuments =
                     </h3>
 
                     <p className="mt-1 text-sm text-slate-500">
-                      Documents currently stored in the records system.
+                      {dashboardDocumentFilter === "ALL"
+                        ? "Documents currently stored in the records system."
+                        : dashboardDocumentFilter === "LINKED"
+                          ? "Showing documents linked to metadata."
+                          : dashboardDocumentFilter === "UNLINKED"
+                            ? "Showing documents requiring appraisal."
+                            : "Showing documents requiring review."}
                     </p>
                   </div>
 
@@ -2514,7 +2802,7 @@ const selectedDepartmentDocuments =
                     >
                       Loading documents...
                     </div>
-                  ) : documents.length ===
+                  ) : dashboardFilteredDocuments.length ===
                     0 ? (
                     <div className="p-12 text-center">
                       <div
@@ -2578,7 +2866,7 @@ const selectedDepartmentDocuments =
                         </thead>
 
                         <tbody>
-                          {documents.map(
+                          {dashboardFilteredDocuments.map(
                             (document) => (
                               <tr
                                 key={
@@ -3175,6 +3463,170 @@ const selectedDepartmentDocuments =
                       value="Local"
                     />
                   </SettingsCard>
+                  {authUser?.role === "ADMIN" && (
+                    <SettingsCard
+                      title="User Management"
+                      description="Manage application access, roles, and account status."
+                    >
+                      <div className="px-6 py-5">
+                        {userManagementError && (
+                          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                            {userManagementError}
+                          </div>
+                        )}
+
+                        {userManagementLoading ? (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                            Loading users...
+                          </div>
+                        ) : userManagementUsers.length === 0 ? (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+                            No users found.
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[760px] text-left">
+                              <thead>
+                                <tr className="border-b border-slate-200 text-xs font-bold uppercase tracking-wider text-slate-400">
+                                  <th className="px-3 py-3">
+                                    User
+                                  </th>
+                                  <th className="px-3 py-3">
+                                    Role
+                                  </th>
+                                  <th className="px-3 py-3">
+                                    Status
+                                  </th>
+                                  <th className="px-3 py-3 text-right">
+                                    Access
+                                  </th>
+                                </tr>
+                              </thead>
+
+                              <tbody className="divide-y divide-slate-100">
+                                {userManagementUsers.map(
+                                  (user) => {
+                                    const isCurrentUser =
+                                      user.id ===
+                                      authUser.id;
+
+                                    const isUpdating =
+                                      updatingUserId ===
+                                      user.id;
+
+                                    return (
+                                      <tr
+                                        key={user.id}
+                                        className="align-middle"
+                                      >
+                                        <td className="px-3 py-4">
+                                          <div className="min-w-0">
+                                            <p className="truncate text-sm font-semibold text-slate-800">
+                                              {user.fullName ||
+                                                "Unnamed user"}
+                                            </p>
+
+                                            <p className="mt-1 truncate text-xs text-slate-500">
+                                              {user.email}
+                                            </p>
+                                          </div>
+                                        </td>
+
+                                        <td className="px-3 py-4">
+                                          <select
+                                            value={user.role}
+                                            disabled={
+                                              isUpdating ||
+                                              isCurrentUser
+                                            }
+                                            onChange={(
+                                              event
+                                            ) => {
+                                              const role =
+                                                event
+                                                  .target
+                                                  .value as
+                                                  | "ADMIN"
+                                                  | "APPRAISER"
+                                                  | "VIEWER";
+
+                                              void updateManagedUser(
+                                                user.id,
+                                                { role }
+                                              );
+                                            }}
+                                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-60"
+                                          >
+                                            <option value="VIEWER">
+                                              VIEWER
+                                            </option>
+                                            <option value="APPRAISER">
+                                              APPRAISER
+                                            </option>
+                                            <option value="ADMIN">
+                                              ADMIN
+                                            </option>
+                                          </select>
+                                        </td>
+
+                                        <td className="px-3 py-4">
+                                          <span
+                                            className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                                              user.isActive
+                                                ? "bg-emerald-50 text-emerald-700"
+                                                : "bg-slate-100 text-slate-500"
+                                            }`}
+                                          >
+                                            {user.isActive
+                                              ? "Active"
+                                              : "Inactive"}
+                                          </span>
+                                        </td>
+
+                                        <td className="px-3 py-4 text-right">
+                                          <button
+                                            type="button"
+                                            disabled={
+                                              isUpdating ||
+                                              isCurrentUser
+                                            }
+                                            onClick={() => {
+                                              void updateManagedUser(
+                                                user.id,
+                                                {
+                                                  isActive:
+                                                    !user.isActive,
+                                                }
+                                              );
+                                            }}
+                                            className={`rounded-lg border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                                              user.isActive
+                                                ? "border-red-200 text-red-700 hover:bg-red-50"
+                                                : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                                            }`}
+                                          >
+                                            {isUpdating
+                                              ? "Updating..."
+                                              : user.isActive
+                                                ? "Deactivate"
+                                                : "Activate"}
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  }
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        <p className="mt-4 text-xs leading-5 text-slate-400">
+                          Your own ADMIN role and account cannot be removed from this screen. The system also requires at least one active ADMIN.
+                        </p>
+                      </div>
+                    </SettingsCard>
+                  )}
                 </div>
               </>
             )}
