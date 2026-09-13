@@ -6078,17 +6078,124 @@ app.post(
               documentId,
             ]
           );
+        const submittedReferenceCode =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "referenceCode"
+          )
+            ? String(submittedMetadata.referenceCode ?? "").trim() || null
+            : metadata.reference_code;
+
+        const submittedTitle =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "title"
+          )
+            ? String(submittedMetadata.title ?? "").trim() || null
+            : metadata.title;
+
+        const submittedPersonName =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "personName"
+          )
+            ? String(submittedMetadata.personName ?? "").trim() || null
+            : metadata.person_name;
+
+        const submittedDepartmentId =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "departmentId"
+          )
+            ? submittedMetadata.departmentId === null ||
+              submittedMetadata.departmentId === undefined ||
+              submittedMetadata.departmentId === ""
+              ? null
+              : Number(submittedMetadata.departmentId)
+            : metadata.department_id;
+
+        const submittedDocumentTypeId =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "documentTypeId"
+          )
+            ? submittedMetadata.documentTypeId === null ||
+              submittedMetadata.documentTypeId === undefined ||
+              submittedMetadata.documentTypeId === ""
+              ? null
+              : Number(submittedMetadata.documentTypeId)
+            : metadata.document_type_id;
+
+        const submittedSection =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "section"
+          )
+            ? String(submittedMetadata.section ?? "").trim() || null
+            : metadata.section;
+
+        const submittedYear =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "year"
+          )
+            ? String(submittedMetadata.year ?? "").trim() || null
+            : metadata.year;
+
+        const submittedDocumentDate =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "documentDate"
+          )
+            ? String(submittedMetadata.documentDate ?? "").trim() || null
+            : metadata.document_date;
+
+        const submittedDescription =
+          submittedMetadata &&
+          Object.prototype.hasOwnProperty.call(
+            submittedMetadata,
+            "description"
+          )
+            ? String(submittedMetadata.description ?? "").trim() || null
+            : metadata.description;
+
         await client.query(
           `
             UPDATE metadata_records
             SET
-              additional_metadata = $1::jsonb,
+              reference_code = COALESCE($1, reference_code),
+              title = $2,
+              person_name = $3,
+              department_id = $4,
+              document_type_id = $5,
+              section = $6,
+              year = $7::integer,
+              document_date = $8::date,
+              description = $9,
+              additional_metadata = $10::jsonb,
               status =
                 'DOCUMENT_LINKED',
               updated_at = NOW()
-            WHERE id = $2
+            WHERE id = $11
           `,
           [
+            submittedReferenceCode,
+            submittedTitle,
+            submittedPersonName,
+            submittedDepartmentId,
+            submittedDocumentTypeId,
+            submittedSection,
+            submittedYear,
+            submittedDocumentDate,
+            submittedDescription,
             JSON.stringify(
               mergedAdditionalMetadata
             ),
