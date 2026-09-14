@@ -6149,14 +6149,92 @@ app.post(
             ? String(submittedMetadata.year ?? "").trim() || null
             : metadata.year;
 
-        const submittedDocumentDate =
+        const submittedDocumentDateRaw =
           submittedMetadata &&
           Object.prototype.hasOwnProperty.call(
             submittedMetadata,
             "documentDate"
           )
-            ? String(submittedMetadata.documentDate ?? "").trim() || null
+            ? String(
+                submittedMetadata.documentDate ?? ""
+              ).trim() || null
             : metadata.document_date;
+
+        let submittedDocumentDate =
+          submittedDocumentDateRaw;
+
+        if (
+          submittedDocumentDate &&
+          !/^\d{4}-\d{2}-\d{2}$/.test(
+            submittedDocumentDate
+          )
+        ) {
+          const submittedYear =
+            submittedMetadata &&
+            Object.prototype.hasOwnProperty.call(
+              submittedMetadata,
+              "year"
+            )
+              ? Number(
+                  submittedMetadata.year
+                )
+              : null;
+
+          const match =
+            submittedDocumentDate.match(
+              /^(?:[A-Za-z]{3}\s+)?([A-Za-z]{3,9})\s+(\d{1,2})$/
+            );
+
+          const months: Record<string, number> = {
+            jan: 1, january: 1,
+            feb: 2, february: 2,
+            mar: 3, march: 3,
+            apr: 4, april: 4,
+            may: 5,
+            jun: 6, june: 6,
+            jul: 7, july: 7,
+            aug: 8, august: 8,
+            sep: 9, sept: 9, september: 9,
+            oct: 10, october: 10,
+            nov: 11, november: 11,
+            dec: 12, december: 12,
+          };
+
+          if (
+            match &&
+            submittedYear !== null &&
+            Number.isInteger(submittedYear) &&
+            submittedYear >= 1000 &&
+            submittedYear <= 9999
+          ) {
+            const month =
+              months[match[1].toLowerCase()];
+            const day = Number(match[2]);
+
+            if (
+              month &&
+              day >= 1 &&
+              day <= 31
+            ) {
+              const candidate =
+                `${submittedYear}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+              const parsed =
+                new Date(`${candidate}T00:00:00Z`);
+
+              if (
+                parsed.getUTCFullYear() ===
+                  submittedYear &&
+                parsed.getUTCMonth() + 1 ===
+                  month &&
+                parsed.getUTCDate() === day
+              ) {
+                submittedDocumentDate =
+                  candidate;
+              }
+            }
+          }
+        }
 
         const submittedDescription =
           submittedMetadata &&
@@ -6387,6 +6465,95 @@ app.post(
                   ?.documentDate
               )
             : extractedDate;
+
+        if (
+          newDocumentDate &&
+          !/^\d{4}-\d{2}-\d{2}$/.test(
+            newDocumentDate
+          )
+        ) {
+          const yearForDate =
+            newYear != null
+              ? Number(newYear)
+              : null;
+
+          const partialDateMatch =
+            newDocumentDate.match(
+              /^(?:[A-Za-z]{3}\s+)?([A-Za-z]{3,9})\s+(\d{1,2})$/
+            );
+
+          const monthNames: Record<
+            string,
+            number
+          > = {
+            jan: 1,
+            january: 1,
+            feb: 2,
+            february: 2,
+            mar: 3,
+            march: 3,
+            apr: 4,
+            april: 4,
+            may: 5,
+            jun: 6,
+            june: 6,
+            jul: 7,
+            july: 7,
+            aug: 8,
+            august: 8,
+            sep: 9,
+            sept: 9,
+            september: 9,
+            oct: 10,
+            october: 10,
+            nov: 11,
+            november: 11,
+            dec: 12,
+            december: 12,
+          };
+
+          if (
+            partialDateMatch &&
+            yearForDate !== null &&
+            Number.isInteger(yearForDate) &&
+            yearForDate >= 1000 &&
+            yearForDate <= 9999
+          ) {
+            const month =
+              monthNames[
+                partialDateMatch[1].toLowerCase()
+              ];
+
+            const day = Number(
+              partialDateMatch[2]
+            );
+
+            if (
+              month &&
+              day >= 1 &&
+              day <= 31
+            ) {
+              const candidate =
+                `${yearForDate}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+              const parsed =
+                new Date(
+                  `${candidate}T00:00:00Z`
+                );
+
+              if (
+                parsed.getUTCFullYear() ===
+                  yearForDate &&
+                parsed.getUTCMonth() + 1 ===
+                  month &&
+                parsed.getUTCDate() === day
+              ) {
+                newDocumentDate =
+                  candidate;
+              }
+            }
+          }
+        }
 
         let newDescription =
           hasSubmittedMetadata
@@ -6903,6 +7070,10 @@ app.listen(
     );
   }
 );
+
+
+
+
 
 
 

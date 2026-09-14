@@ -556,6 +556,19 @@ const [appraisalMetadataForm, setAppraisalMetadataForm] =
     description: "",
   });
 
+  const appraisalRequiredFieldsComplete =
+    Boolean(
+      appraisalMetadataForm.referenceCode.trim() &&
+      appraisalMetadataForm.title.trim() &&
+      appraisalMetadataForm.documentDate &&
+      appraisalMetadataForm.year.trim() &&
+      appraisalMetadataForm.personName.trim() &&
+      appraisalMetadataForm.departmentId &&
+      appraisalMetadataForm.documentTypeId &&
+      appraisalMetadataForm.section.trim() &&
+      appraisalMetadataForm.description.trim()
+    );
+
 
   const [expandedAdditionalMetadata, setExpandedAdditionalMetadata] =
     useState<Set<string>>(new Set());
@@ -1646,7 +1659,7 @@ const handleAppraisalReview = async (
           decision: "",
         }),
         metadataRecordId: Number(data.metadata.id),
-        decision: "NEW_METADATA_CREATED",
+        decision: "LINKED",
         matchType: "NO_MATCH",
         confidence: 100,
         matchingFields: [
@@ -5686,17 +5699,22 @@ const selectedDepartmentDocuments =
                   <div className="mt-4 flex shrink-0 justify-center">
                     <button
                       type="button"
-                      disabled={reviewingDecision}
+                      disabled={reviewingDecision || (uploadedAppraisal?.decision !== "LINKED" && !appraisalRequiredFieldsComplete)}
                       onClick={() => {
                         if (
                           uploadedAppraisal?.matchType ===
                             "NO_MATCH" &&
                           uploadedAppraisal.decision !==
-                            "NEW_METADATA_CREATED"
+                            "LINKED"
                         ) {
                           void handleAppraisalReview(
                             "REJECT"
                           );
+                          return;
+                        }
+
+                        if (uploadedAppraisal?.decision !== "LINKED") {
+                          void handleAppraisalReview("APPROVE");
                           return;
                         }
 
@@ -5993,5 +6011,8 @@ function SettingRow({
     </div>
   );
 }
+
+
+
 
 
