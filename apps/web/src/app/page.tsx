@@ -5,163 +5,70 @@ import {
   useRef,
   useState,
 } from "react";
+import {
+  getCurrentUser,
+  logoutUser,
+} from "@/lib/api/auth";
+import {
+  getDepartments,
+  createDepartment,
+  updateDepartment,
+  deleteDepartmentRequest,
+} from "@/lib/api/departments";
+import { getDashboard } from "@/lib/api/dashboard";
+import { getDocumentTypes } from "@/lib/api/document-types";
+import { getDocuments, getDocumentFile, reviewDocument, uploadDocument } from "@/lib/api/documents";
+import { searchDocuments } from "@/lib/api/search";
+
+import { createMetadata, getMetadata, importBulkMetadata, previewBulkMetadata } from "@/lib/api/metadata";
+import { getUsers, updateUser } from "@/lib/api/users";
+
 import type {
   ChangeEvent,
   FormEvent,
   ReactNode,
 } from "react";
 
+import {
+  formatDate,
+  formatFileSize,
+  formatUploadFieldLabel,
+  formatUploadFieldValue,
+} from "@/lib/utils/formatting";
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 
-type Statistics = {
-  documents: string | number;
-  metadata: string | number;
-  departments: string | number;
-  linked: string | number;
-  awaiting: string | number;
-  review: string | number;
-  unlinked: string | number;
-};
-
-type Department = {
-  id: number;
-  name: string;
-  code: string;
-  description: string;
-};
-
-type DocumentType = {
-  id: number;
-  name: string;
-  description: string;
-};
-
-type AdditionalMetadataField = {
-  key: string;
-  value: string;
-};
-
-type MetadataRecord = {
-  id: string;
-  reference_code: string;
-  title: string | null;
-  document_date: string | null;
-  year: number | null;
-  person_name: string | null;
-  description: string | null;
-  section: string | null;
-  status: string;
-  additional_metadata: Record<string, unknown> | null;
-  department_name: string | null;
-  document_type_name: string | null;
-  linked_document_id: string | null;
-  linked_document_code: string | null;
-  linked_filename: string | null;
-};
-
-type SearchResultDocument = {
-  id: string | number;
-  document_code: string;
-  filename: string;
-  title: string | null;
-  document_date: string | null;
-  upload_date: string;
-  year: number | null;
-  person_name: string | null;
-  file_type: string | null;
-  file_size: number | null;
-  status: string;
-  upload_number: number | null;
-};
-
-type SearchResult = {
-  id: string;
-  reference_code: string;
-  title: string | null;
-  document_date: string | null;
-  year: number | null;
-  person_name: string | null;
-  description: string | null;
-  section: string | null;
-  status: string;
-  department_id: number | null;
-  department_name: string | null;
-  department_code: string | null;
-  document_type_id: number | null;
-  document_type_name: string | null;
-  linked_documents: SearchResultDocument[];
-};
-type AuthUser = {
-  id: number;
-  email: string;
-  fullName: string | null;
-  role: "ADMIN" | "APPRAISER" | "VIEWER";
-  isActive: boolean;
-};
-type UserManagementUser = {
-  id: number;
-  email: string;
-  fullName: string | null;
-  role: "ADMIN" | "APPRAISER" | "VIEWER";
-  isActive: boolean;
-  createdAt: string;
-};
-
-type UploadedDocument = {
-  [key: string]: unknown;
-  id?: string | number;
-  document_code?: string;
-  filename?: string;
-  file_type?: string;
-  file_size?: number;
-  status?: string;
-};
-
-type UploadedAppraisal = {
-  matchType:
-    | "STRONG_MATCH"
-    | "PARTIAL_MATCH"
-    | "NO_MATCH";
-  confidence: number;
-  metadataRecordId: number | null;
-  matchingFields: string[];
-  conflictingFields: string[];
-  decision: string;
-  metadata?: {
-    id?: string | number;
-    reference_code?: string | null;
-    title?: string | null;
-    document_date?: string | null;
-    year?: number | null;
-    person_name?: string | null;
-    description?: string | null;
-    section?: string | null;
-    department_id?: string | number | null;
-    department_name?: string | null;
-    department_code?: string | null;
-    document_type_id?: string | number | null;
-    document_type_name?: string | null;
-    additional_metadata?: Record<string, unknown> | null;
-  } | null;
-  metadataConflicts?: Array<{
-    field: string;
-    existingValue: string | number | null;
-    documentValue: string | number | null;
-  }>;
-  match?: {
-    id?: string | number;
-    document_id?: string | number;
-    metadata_record_id?: string | number | null;
-    match_type?: string;
-    confidence?: number | null;
-    matching_fields?: string | null;
-    conflicting_fields?: string | null;
-    decision?: string;
-    created_at?: string;
-  };
-};
-
+import type {
+  AuthUser,
+  UserManagementUser,
+} from "@/types/auth";
+import type {
+  Statistics,
+} from "@/types/dashboard";
+import type {
+  Department,
+  DocumentType,
+} from "@/types/departments";
+import type {
+  UploadedDocument,
+  SearchResultDocument,
+} from "@/types/documents";
+import type {
+  UploadedAppraisal,
+} from "@/types/appraisal";
+import type {
+  AdditionalMetadataField,
+  MetadataRecord,
+} from "@/types/metadata";
+import type {
+  SearchResult,
+} from "@/types/search";
+import { NavItem } from "@/components/layout/NavItem";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { TopBar } from "@/components/layout/TopBar";
+import { MetadataRegistry } from "@/components/metadata/MetadataRegistry";
+import { Documents } from "@/components/documents/Documents";
+import { Dashboard } from "@/components/dashboard/Dashboard";
 const statCards = [
   {
     key: "documents",
@@ -319,8 +226,7 @@ export default function Home() {
     useState<DocumentType[]>([]);
 
   const refreshDepartments = async () => {
-    const response =
-      await fetch(`${API_URL}/api/departments`, { credentials: "include" });
+    const response = await getDepartments();
 
     const data =
       await response.json();
@@ -415,25 +321,21 @@ export default function Home() {
     setDepartmentMutationError("");
 
     try {
-      const endpoint =
-        departmentEditingId === null
-          ? `${API_URL}/api/departments`
-          : `${API_URL}/api/departments/${departmentEditingId}`;
-
       const response =
-        await fetch(endpoint, {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            name,
-            code,
-            description,
-          }),
-        });
+        departmentEditingId === null
+          ? await createDepartment({
+              name,
+              code,
+              description,
+            })
+          : await updateDepartment(
+              departmentEditingId,
+              {
+                name,
+                code,
+                description,
+              }
+            );
 
       const data =
         await response.json();
@@ -479,14 +381,7 @@ export default function Home() {
     setDepartmentMutationError("");
 
     try {
-      const response =
-        await fetch(
-          `${API_URL}/api/departments/${department.id}/delete`,
-          {
-            method: "POST",
-          credentials: "include",
-          }
-        );
+      const response = await deleteDepartmentRequest(department.id);
 
       const data =
         await response.json();
@@ -687,95 +582,6 @@ const openDepartmentRecords = (
     }
   };
 
-  const formatDate = (
-    value: string | null | undefined
-  ): string => {
-    if (!value) return "—";
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-
-    return new Intl.DateTimeFormat(
-      "en-GB",
-      {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-      }
-    ).format(date);
-  };
-
-  const formatFileSize = (
-    value: number | null | undefined
-  ): string => {
-    if (
-      value === null ||
-      value === undefined ||
-      Number.isNaN(value)
-    ) {
-      return "—";
-    }
-
-    if (value < 1024) {
-      return `${value} B`;
-    }
-
-    if (value < 1024 * 1024) {
-      return `${(value / 1024).toFixed(1)} KB`;
-    }
-
-    if (value < 1024 * 1024 * 1024) {
-      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-    }
-
-    return `${(
-      value /
-      (1024 * 1024 * 1024)
-    ).toFixed(1)} GB`;
-  };
-
-  const formatUploadFieldLabel = (
-    value: string
-  ): string => {
-    return value
-      .replace(/_/g, " ")
-      .replace(/([a-z])([A-Z])/g, "$1 $2")
-      .replace(/\b\w/g, (letter) =>
-        letter.toUpperCase()
-      );
-  };
-
-  const formatUploadFieldValue = (
-    key: string,
-    value: unknown
-  ): string => {
-    if (
-      value === null ||
-      value === undefined ||
-      value === ""
-    ) {
-      return "—";
-    }
-
-    if (typeof value === "boolean") {
-      return value ? "Yes" : "No";
-    }
-
-    if (
-      typeof value === "object"
-    ) {
-      try {
-        return JSON.stringify(value);
-      } catch {
-        return "—";
-      }
-    }
-
-    return String(value);
-  };
 
   /*
    * =============================================================
@@ -794,11 +600,11 @@ const openDepartmentRecords = (
         typesResponse,
         documentsResponse,
       ] = await Promise.all([
-        fetch(`${API_URL}/api/dashboard`, { credentials: "include" }),
-        fetch(`${API_URL}/api/metadata`, { credentials: "include" }),
-        fetch(`${API_URL}/api/departments`, { credentials: "include" }),
-        fetch(`${API_URL}/api/document-types`, { credentials: "include" }),
-        fetch(`${API_URL}/api/documents`, { credentials: "include" }),
+        getDashboard(),
+        getMetadata(),
+        getDepartments(),
+        getDocumentTypes(),
+        getDocuments(),
       ]);
 
       const [
@@ -871,13 +677,7 @@ const openDepartmentRecords = (
       try {
         setAuthError("");
 
-        const response = await fetch(
-          `${API_URL}/api/auth/me`,
-          {
-            method: "GET",
-            credentials: "include",
-          }
-        );
+        const response = await getCurrentUser();
 
         const data = await response.json();
 
@@ -960,13 +760,7 @@ const openDepartmentRecords = (
         setSearchLoading(true);
         setSearchError("");
 
-        const response = await fetch(
-          `${API_URL}/api/search?q=${encodeURIComponent(query)}`,
-          {
-            method: "GET",
-            credentials: "include",
-          }
-        );
+        const response = await searchDocuments(query);
 
         const data = await response.json();
 
@@ -1063,14 +857,7 @@ const openDepartmentRecords = (
       const formData = new FormData();
       formData.append("file", bulkMetadataFile);
 
-      const response = await fetch(
-        `${API_URL}/api/metadata/bulk?preview=true`,
-        {
-          method: "POST",
-          credentials: "include",
-          body: formData,
-        }
-      );
+      const response = await await previewBulkMetadata(formData);
 
       const data = await response.json();
 
@@ -1115,14 +902,7 @@ const openDepartmentRecords = (
       const formData = new FormData();
       formData.append("file", bulkMetadataFile);
 
-      const response = await fetch(
-        `${API_URL}/api/metadata/bulk`,
-        {
-          method: "POST",
-          credentials: "include",
-          body: formData,
-        }
-      );
+      const response = await await importBulkMetadata(formData);
 
       const data = await response.json();
 
@@ -1180,45 +960,34 @@ const openDepartmentRecords = (
     event.preventDefault();
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/metadata`,
-        {
-          method: "POST",
-        credentials: "include",
-        headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            referenceCode:
-              form.referenceCode.trim(),
-            personName:
-              form.personName.trim() ||
-              null,
-            title:
-              form.title.trim() ||
-              null,
-            departmentId:
-              form.departmentId ||
-              null,
-            documentTypeId:
-              form.documentTypeId ||
-              null,
-            year:
-              form.year ||
-              null,
-            documentDate:
-          form.documentDate ||
-          null,
-        section:
-          form.section.trim() ||
-          null,
-        description:
-          form.description.trim() ||
-          null,
-          }),
-        }
-      );
+      const response = await createMetadata({
+          referenceCode:
+            form.referenceCode.trim(),
+          personName:
+            form.personName.trim() ||
+            null,
+          title:
+            form.title.trim() ||
+            null,
+          departmentId:
+            form.departmentId ||
+            null,
+          documentTypeId:
+            form.documentTypeId ||
+            null,
+          year:
+            form.year ||
+            null,
+          documentDate:
+            form.documentDate ||
+            null,
+          section:
+            form.section.trim() ||
+            null,
+          description:
+            form.description.trim() ||
+            null,
+        })
 
       const data =
         await response.json();
@@ -1338,14 +1107,7 @@ const openDepartmentRecords = (
       );
 
       const response =
-        await fetch(
-          `${API_URL}/api/documents/upload`,
-          {
-            method: "POST",
-            body: formData,
-            credentials: "include",
-          }
-        );
+        await uploadDocument(selectedFile);
 
       const data =
         await response.json();
@@ -1505,13 +1267,7 @@ const openDepartmentRecords = (
   try {
     setReviewError("");
 
-    const response = await fetch(
-      `${API_URL}/api/documents/${numericDocumentId}/file`,
-      {
-        method: "GET",
-        credentials: "include",
-      }
-    );
+    const response = await getDocumentFile(numericDocumentId);
 
     if (!response.ok) {
       let errorMessage =
@@ -1584,50 +1340,43 @@ const handleAppraisalReview = async (
     setReviewingDecision(true);
     setReviewError("");
 
-    const response = await fetch(
-      `${API_URL}/api/documents/${uploadedDocument.id}/review`,
+    const response = await reviewDocument(
+      Number(uploadedDocument.id),
       {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
+        decision,
+        metadataRecordId:
+          uploadedAppraisal.metadataRecordId,
+        metadata: {
+          referenceCode:
+            appraisalMetadataForm.referenceCode.trim() || null,
+          title:
+            appraisalMetadataForm.title.trim() || null,
+          documentDate:
+            appraisalMetadataForm.documentDate || null,
+          year:
+            appraisalMetadataForm.year.trim() || null,
+          personName:
+            appraisalMetadataForm.personName.trim() || null,
+          departmentId:
+            appraisalMetadataForm.departmentId || null,
+          documentTypeId:
+            appraisalMetadataForm.documentTypeId || null,
+          section:
+            appraisalMetadataForm.section.trim() || null,
+          description:
+            appraisalMetadataForm.description.trim() || null,
+          additionalMetadata: Object.fromEntries(
+            [
+              ...appraisalCommittedAdditionalMetadata,
+              ...appraisalAdditionalMetadata,
+            ]
+              .map((field) => [
+                field.key.trim(),
+                field.value.trim(),
+              ] as const)
+              .filter(([key]) => Boolean(key))
+          ),
         },
-        body: JSON.stringify({
-          decision,
-          metadataRecordId:
-            uploadedAppraisal.metadataRecordId,
-          metadata: {
-            referenceCode:
-              appraisalMetadataForm.referenceCode.trim() || null,
-            title:
-              appraisalMetadataForm.title.trim() || null,
-            documentDate:
-              appraisalMetadataForm.documentDate || null,
-            year:
-              appraisalMetadataForm.year.trim() || null,
-            personName:
-              appraisalMetadataForm.personName.trim() || null,
-            departmentId:
-              appraisalMetadataForm.departmentId || null,
-            documentTypeId:
-              appraisalMetadataForm.documentTypeId || null,
-            section:
-              appraisalMetadataForm.section.trim() || null,
-            description:
-              appraisalMetadataForm.description.trim() || null,
-              additionalMetadata: Object.fromEntries(
-                [
-                  ...appraisalCommittedAdditionalMetadata,
-                  ...appraisalAdditionalMetadata,
-                ]
-                  .map((field) => [
-                    field.key.trim(),
-                    field.value.trim(),
-                  ] as const)
-                  .filter(([key]) => Boolean(key))
-              ),
-          },
-        }),
       }
     );
 
@@ -1730,14 +1479,7 @@ const handleAppraisalReview = async (
         setUserManagementLoading(true);
         setUserManagementError("");
 
-        const response =
-          await fetch(
-            `${API_URL}/api/users`,
-            {
-              method: "GET",
-              credentials: "include",
-            }
-          );
+        const response = await getUsers();
 
         const data =
           await response.json();
@@ -1791,21 +1533,7 @@ const handleAppraisalReview = async (
         setUpdatingUserId(userId);
         setUserManagementError("");
 
-        const response =
-          await fetch(
-            `${API_URL}/api/users/${userId}`,
-            {
-              method: "PATCH",
-              credentials: "include",
-              headers: {
-                "Content-Type":
-                  "application/json",
-              },
-              body: JSON.stringify(
-                changes
-              ),
-            }
-          );
+        const response = await updateUser(userId, changes);
 
         const data =
           await response.json();
@@ -1864,13 +1592,7 @@ const handleAppraisalReview = async (
     try {
       setLoggingOut(true);
 
-      await fetch(
-        `${API_URL}/api/auth/logout`,
-        {
-          method: "POST",
-          credentials: "include",
-        }
-      );
+      await logoutUser();
     } catch (error) {
       console.error("Logout request failed:", error);
     } finally {
@@ -2063,226 +1785,27 @@ const selectedDepartmentDocuments =
         {/* SIDEBAR */}
         {/* ========================================================= */}
 
-        <aside className="hidden w-64 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-          <div className="border-b border-slate-200 px-6 py-6">
-            <div className="flex items-center gap-3">
-              <div
-                aria-hidden="true"
-                className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-lg font-bold text-white"
-              >
-                DA
-              </div>
-
-              <div>
-                <p className="text-sm font-bold tracking-tight">
-                  Document Appraisal
-                </p>
-
-                <p className="text-xs text-slate-500">
-                  AI System
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <nav
-            aria-label="Main navigation"
-            className="flex-1 space-y-1 px-3 py-5"
-          >
-            <NavItem
-              active={
-                activePage ===
-                "Dashboard"
-              }
-              icon="⌂"
-              label="Dashboard"
-              onClick={() =>
-                setActivePage(
-                  "Dashboard"
-                )
-              }
-            />
-
-            <NavItem
-              active={
-                activePage ===
-                "Documents"
-              }
-              icon="▣"
-              label="Documents"
-              onClick={() =>
-                setActivePage(
-                  "Documents"
-                )
-              }
-            />
-
-            <NavItem
-              active={
-                activePage ===
-                "Metadata Registry"
-              }
-              icon="◫"
-              label="Metadata"
-              onClick={() =>
-                setActivePage(
-                  "Metadata Registry"
-                )
-              }
-            />
-
-            <NavItem
-              active={
-                activePage ===
-                "Search"
-              }
-              icon="⌕"
-              label="Search"
-              onClick={() =>
-                setActivePage(
-                  "Search"
-                )
-              }
-            />
-
-            <NavItem
-              active={
-                activePage ===
-                "Departments"
-              }
-              icon="▤"
-              label="Departments"
-              onClick={() =>
-                setActivePage(
-                  "Departments"
-                )
-              }
-            />
-
-            <NavItem
-              active={
-                activePage ===
-                "Settings"
-              }
-              icon="⚙"
-              label="Settings"
-              onClick={() =>
-                setActivePage(
-                  "Settings"
-                )
-              }
-            />
-          </nav>
-
-          <div className="border-t border-slate-200 p-4">
-            {canManageDocuments && (
-<button
-              type="button"
-              onClick={() =>
-                setShowUploadModal(
-                  true
-                )
-              }
-              className="mb-4 w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-            >
-              + Upload Document
-            </button>
-            )}
-
-            <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-slate-800">
-                  {authUser?.fullName ||
-                    authUser?.email}
-                </p>
-
-                <p className="mt-1 truncate text-xs text-slate-500">
-                  {authUser?.email}
-                </p>
-
-                <p className="mt-2 inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-600">
-                  {authUser?.role}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  void logout();
-                }}
-                disabled={loggingOut}
-                className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {loggingOut
-                  ? "Signing out..."
-                  : "Sign out"}
-              </button>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4">
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                System status
-              </p>
-
-              <div className="mt-3 flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className="h-2.5 w-2.5 rounded-full bg-emerald-500"
-                />
-
-                <span className="text-sm font-medium text-slate-700">
-                  API connected
-                </span>
-              </div>
-            </div>
-          </div>
-        </aside>
+        <Sidebar
+              activePage={activePage}
+              setActivePage={setActivePage}
+              canManageDocuments={canManageDocuments}
+              setShowUploadModal={setShowUploadModal}
+              authUser={authUser}
+              logout={logout}
+              loggingOut={loggingOut}
+/>
 
         {/* ========================================================= */}
         {/* MAIN */}
         {/* ========================================================= */}
 
         <section className="flex-1">
-          <header className="border-b border-slate-200 bg-white">
-            <div className="flex flex-col justify-between gap-4 px-6 py-5 md:flex-row md:items-center lg:px-10">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                  Records intelligence
-                </p>
-
-                <h1 className="mt-1 text-2xl font-bold tracking-tight">
-                  {activePage}
-                </h1>
-              </div>
-
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setActivePage(
-                      "Search"
-                    )
-                  }
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                >
-                  Search
-                </button>
-
-                {canManageDocuments && (
-<button
-                  type="button"
-                  onClick={() =>
-                    setShowUploadModal(
-                      true
-                    )
-                  }
-                  className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                >
-                  + Upload Document
-                </button>
-                )}
-              </div>
-            </div>
-          </header>
+          <TopBar
+            activePage={activePage}
+            setActivePage={setActivePage}
+            canManageDocuments={canManageDocuments}
+            setShowUploadModal={setShowUploadModal}
+/>
 
           {/* ======================================================= */}
           {/* CONTENT */}
@@ -2293,738 +1816,44 @@ const selectedDepartmentDocuments =
             {/* DASHBOARD */}
             {/* ===================================================== */}
 
-            {activePage ===
-              "Dashboard" && (
-              <>
-                <div className="mb-8 rounded-2xl bg-slate-900 p-7 text-white shadow-sm">
-                  <div className="max-w-3xl">
-                    <p className="text-sm font-semibold text-slate-300">
-                      DOCUMENT APPRAISAL AI
-                    </p>
-
-                    <h2 className="mt-2 text-3xl font-bold tracking-tight">
-                      Intelligent control of your institutional records.
-                    </h2>
-
-                    <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-                      Register metadata before documents arrive, analyze
-                      incoming files, identify possible matches, and maintain
-                      a searchable relationship between metadata and physical
-                      records.
-                    </p>
-                  </div>
-
-                  <div className="mt-6 flex flex-wrap gap-3">
-                    {canManageMetadata && (
-<button
-                      type="button"
-                      onClick={() =>
-                        setShowMetadataModal(
-                          true
-                        )
-                      }
-                      className="rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-900 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-slate-900"
-                    >
-                      + Add Metadata
-                    </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setActivePage(
-                          "Documents"
-                        )
-                      }
-                      className="rounded-xl border border-slate-600 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-slate-900"
-                    >
-                      Browse Documents
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {statCards.map(
-                    (card) => (
-                      <div
-                        key={
-                          card.key
-                        }
-                        role="button"
-                        tabIndex={0}
-                        onClick={() =>
-                          handleDashboardStatCardClick(
-                            card.key
-                          )
-                        }
-                        onKeyDown={(event) => {
-                          if (
-                            event.key === "Enter" ||
-                            event.key === " "
-                          ) {
-                            event.preventDefault();
-                            handleDashboardStatCardClick(
-                              card.key
-                            );
-                          }
-                        }}
-                        className={`rounded-2xl border bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 ${
-                          (
-                            card.key === "documents" &&
-                            dashboardDocumentFilter === "ALL"
-                          ) ||
-                          (
-                            card.key === "metadata" &&
-                            dashboardMetadataFilter === "ALL"
-                          ) ||
-                          (
-                            card.key === "awaiting" &&
-                            dashboardMetadataFilter === "AWAITING_DOCUMENT"
-                          ) ||
-                          (
-                            card.key === "review" &&
-                            dashboardDocumentFilter === "REVIEW"
-                          ) ||
-                          (
-                            card.key === "linked" &&
-                            dashboardDocumentFilter === "LINKED"
-                          ) ||
-                          (
-                            card.key === "unlinked" &&
-                            dashboardDocumentFilter === "UNLINKED"
-                          )
-                            ? "border-slate-900 ring-1 ring-slate-900"
-                            : "border-slate-200"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-slate-500">
-                              {
-                                card.label
-                              }
-                            </p>
-
-                            <p className="mt-2 text-3xl font-bold tracking-tight">
-                              {getStatValue(
-                                card.key
-                              )}
-                            </p>
-                          </div>
-
-                          <div
-                            aria-hidden="true"
-                            className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-sm font-bold text-slate-700"
-                          >
-                            {
-                              card.icon
-                            }
-                          </div>
-                        </div>
-
-                        <p className="mt-3 text-xs leading-5 text-slate-400">
-                          {
-                            card.description
-                          }
-                        </p>
-                      </div>
-                    )
-                  )}
-                </div>
-
-                <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-                  <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                    <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-                      <div>
-                        <h3 className="font-bold">
-                          Department Records
-                        </h3>
-
-                        <p className="mt-1 text-sm text-slate-500">
-                          Browse records by organizational department.
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setActivePage(
-                            "Departments"
-                          )
-                        }
-                        className="rounded-lg text-sm font-semibold text-slate-700 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                      >
-                        View all
-                      </button>
-                    </div>
-
-                    <div className="grid gap-3 p-5 sm:grid-cols-2">
-                      {departments
-                        .slice(0, 8)
-                        .map(
-                          (
-                            department
-                          ) => (
-                            <button
-                              type="button"
-                              key={
-                                department.id
-                              }
-                              onClick={() =>
-                                openDepartmentRecords(
-                                  department
-                                )
-                              }
-                              className="group rounded-xl border border-slate-200 p-4 text-left transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <div
-                                    aria-hidden="true"
-                                    className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-700"
-                                  >
-                                    {department.code.slice(
-                                      0,
-                                      2
-                                    )}
-                                  </div>
-
-                                  <div>
-                                    <p className="text-sm font-semibold">
-                                      {
-                                        department.name
-                                      }
-                                    </p>
-
-                                    <p className="mt-0.5 text-xs text-slate-400">
-                                      {
-                                        department.code
-                                      }
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <span
-                                  aria-hidden="true"
-                                  className="text-slate-300 transition group-hover:text-slate-600"
-                                >
-                                  →
-                                </span>
-                              </div>
-                            </button>
-                          )
-                        )}
-                    </div>
-                  </section>
-
-                  <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-                    <div className="border-b border-slate-200 px-6 py-5">
-                      <h3 className="font-bold">
-                        Appraisal Workflow
-                      </h3>
-
-                      <p className="mt-1 text-sm text-slate-500">
-                        How the system handles incoming records.
-                      </p>
-                    </div>
-
-                    <div className="space-y-5 p-6">
-                      <WorkflowStep
-                        number="01"
-                        title="Metadata first"
-                        text="Create an expected record before the physical document arrives."
-                      />
-
-                      <WorkflowStep
-                        number="02"
-                        title="Document arrives"
-                        text="Upload a PDF or DOCX and preserve its physical file securely."
-                      />
-
-                      <WorkflowStep
-                        number="03"
-                        title="Appraisal"
-                        text="Extract available information and compare it against existing metadata."
-                      />
-
-                      <WorkflowStep
-                        number="04"
-                        title="Decision"
-                        text="Strong matches link automatically; uncertain matches require user review."
-                      />
-                    </div>
-                  </section>
-                </div>
-
-                <div className="mt-6 rounded-2xl border border-dashed border-slate-300 bg-white p-6">
-                  <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-                    <div>
-                      <p className="text-sm font-bold">
-                        Ready to register a record?
-                      </p>
-
-                      <p className="mt-1 text-sm text-slate-500">
-                        Add metadata now, even if the physical document has
-                        not arrived yet.
-                      </p>
-                    </div>
-
-                    {canManageMetadata && (
-<button
-                      type="button"
-                      onClick={() =>
-                        setShowMetadataModal(
-                          true
-                        )
-                      }
-                      className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                    >
-                      Create Metadata Record
-                    </button>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* ===================================================== */}
-            {/* METADATA REGISTRY */}
-            {/* ===================================================== */}
-
-            {activePage ===
+            <Dashboard
+              statistics={statistics}
+              departments={departments}
+              documents={documents}
+              metadata={metadata}
+              statCards={statCards}
+              dashboardDocumentFilter={dashboardDocumentFilter}
+              dashboardMetadataFilter={dashboardMetadataFilter}
+              canManageMetadata={canManageMetadata}
+              setDashboardDocumentFilter={setDashboardDocumentFilter}
+              setDashboardMetadataFilter={setDashboardMetadataFilter}
+              setShowMetadataModal={setShowMetadataModal}
+              setActivePage={setActivePage}
+              handleDashboardStatCardClick={handleDashboardStatCardClick}
+              openDepartmentRecords={openDepartmentRecords}
+              getStatValue={getStatValue}
+/>
+{activePage ===
               "Metadata Registry" && (
-              <>
-                {selectedDepartment && (
-                  <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                    <div className="flex flex-col justify-between gap-4 border-b border-slate-200 px-6 py-5 md:flex-row md:items-center">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                          Department records
-                        </p>
-                        <h2 className="mt-1 text-xl font-bold text-slate-950">
-                          {selectedDepartment.name}
-                        </h2>
-                        <p className="mt-1 text-sm text-slate-500">
-                          All documents currently assigned to{" "}
-                          {selectedDepartment.name}.
-                        </p>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelectedDepartmentId(null)
-                        }
-                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                      >
-                        View All Metadata
-                      </button>
-                    </div>
-
-                    {selectedDepartmentDocuments.length === 0 ? (
-                      <div className="p-8 text-center">
-                        <p className="text-sm font-semibold text-slate-700">
-                          No documents assigned to this department.
-                        </p>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Uploaded documents assigned to{" "}
-                          {selectedDepartment.name} will appear here.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-slate-200">
-                          <thead className="bg-slate-50">
-                            <tr>
-                              <th
-                                scope="col"
-                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
-                              >
-                                Document Code
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
-                              >
-                                Filename
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
-                              >
-                                Type
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
-                              >
-                                Size
-                              </th>
-                              <th
-                                scope="col"
-                                className="px-6 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500"
-                              >
-                                Status
-                              </th>
-                            </tr>
-                          </thead>
-
-                          <tbody className="divide-y divide-slate-100 bg-white">
-                            {selectedDepartmentDocuments.map(
-                              (document) => (
-                                <tr key={String(document.id)}>
-                                  <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-900">
-                                    {document.document_code ?? "—"}
-                                  </td>
-
-                                  <td className="px-6 py-4 text-sm text-slate-700">
-                                    {document.filename ?? "—"}
-                                  </td>
-
-                                  <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
-                                    {document.file_type ?? "—"}
-                                  </td>
-
-                                  <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
-                                    {formatFileSize(
-                                      document.file_size as
-                                        | number
-                                        | undefined
-                                    )}
-                                  </td>
-
-                                  <td className="whitespace-nowrap px-6 py-4">
-                                    <StatusBadge
-                                      status={
-                                        document.status ??
-                                        "UNKNOWN"
-                                      }
-                                    />
-                                  </td>
-                                </tr>
-                              )
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </section>
-                )}
-                <div className="mb-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <SummaryCard
-                    label="Metadata Records"
-                    value={
-                      metadata.length
-                    }
-                  />
-
-                  <SummaryCard
-                    label="Awaiting Documents"
-                    value={
-                      metadata.filter(
-                        (item) =>
-                          item.status ===
-                          "AWAITING_DOCUMENT"
-                      ).length
-                    }
-                  />
-
-                  <SummaryCard
-                    label="Linked"
-                    value={
-                      metadata.filter(
-                        (item) =>
-                          Boolean(
-                            item.linked_document_id
-                          )
-                      ).length
-                    }
-                  />
-
-                  <SummaryCard
-                    label="Departments"
-                    value={
-                      departments.length
-                    }
-                  />
-                </div>
-
-                <div className="mb-6 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
-                      Metadata management
-                    </p>
-
-                    <h2 className="mt-1 text-xl font-bold">
-                      Pre-fed Metadata
-                    </h2>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                      Register expected documents before the physical file
-                      arrives.
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setShowMetadataModal(
-                        true
-                      )
-                    }
-                    className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                  >
-                    + Register Metadata
-                  </button>
-
-                  {canManageMetadata && (
-                    <button
-                      type="button"
-                      onClick={() => setShowBulkMetadataModal(true)}
-                      className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
-                    >
-                      Bulk Upload Metadata
-                    </button>
-                  )}
-                </div>
-
-                <div className="mb-5 flex items-center gap-3">
-                  <div className="relative flex-1">
-                    <span
-                      aria-hidden="true"
-                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
-                    >
-                      ⌕
-                    </span>
-
-                    <input
-                      aria-label="Search metadata records"
-                      value={
-                        searchTerm
-                      }
-                      onChange={(
-                        event
-                      ) =>
-                        setSearchTerm(
-                          event.target
-                            .value
-                        )
-                      }
-                      placeholder="Search reference, person, title, department..."
-                      className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-sm outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-                    />
-                  </div>
-                </div>
-
-                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  {loading ? (
-                    <div
-                      role="status"
-                      aria-live="polite"
-                      className="p-10 text-center text-sm text-slate-500"
-                    >
-                      Loading metadata registry...
-                    </div>
-                  ) : filteredMetadata.length ===
-                    0 ? (
-                    <div className="p-12 text-center">
-                      <div
-                        aria-hidden="true"
-                        className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-lg"
-                      >
-                        ◫
-                      </div>
-
-                      <h3 className="mt-4 font-bold">
-                        No metadata records found
-                      </h3>
-
-                      <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
-                        Register expected document information before
-                        uploading physical documents.
-                      </p>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setShowMetadataModal(
-                            true
-                          )
-                        }
-                        className="mt-5 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                      >
-                        + Register Metadata
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm">
-                        <thead className="border-b border-slate-200 bg-slate-50">
-                          <tr>
-                            <th className="px-5 py-4 font-semibold">
-                              Reference
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Document
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Person
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Department
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Type
-                            </th>
-
-                                                        <th className="px-5 py-4 font-semibold">
-                              Section
-                            </th>
-<th className="px-5 py-4 font-semibold">
-                              Date
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Status
-                            </th>
-                            <th className="px-5 py-4 font-semibold">
-                              Additional Metadata
-                            </th>
-
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {filteredMetadata.map(
-                            (record) => (
-                              <tr
-                                key={
-                                  record.id
-                                }
-                                className="border-b border-slate-100 last:border-0 hover:bg-slate-50"
-                              >
-                                <td className="px-5 py-5">
-                                  <div className="font-semibold">
-                                    {
-                                      record.reference_code
-                                    }
-                                  </div>
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  <div className="font-medium">
-                                    {
-                                      record.title ||
-                                      "Untitled"
-                                    }
-                                  </div>
-
-                                  {record.linked_document_code && (
-                                    <div className="mt-1 text-xs font-semibold text-blue-600">
-                                      {
-                                        record.linked_document_code
-                                      }
-                                    </div>
-                                  )}
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  {
-                                    record.person_name ||
-                                    "—"
-                                  }
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  {
-                                    record.department_name ||
-                                    "—"
-                                  }
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  {
-                                    record.document_type_name ||
-                                    "—"
-                                  }
-                                </td>
-                                <td className="px-5 py-5 text-sm text-slate-600">
-                                  {record.section || "—"}
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  {formatDate(
-                                    record.document_date
-                                  )}
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  <StatusBadge
-                                    status={
-                                      record.status
-                                    }
-                                  />
-                                </td>
-
-                                <td className="px-5 py-5 align-top">
-                                  {record.additional_metadata &&
-                                  Object.keys(record.additional_metadata).length > 0 ? (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setExpandedAdditionalMetadata((current) => {
-                                            const next = new Set(current);
-                                            if (next.has(record.id)) {
-                                              next.delete(record.id);
-                                            } else {
-                                              next.add(record.id);
-                                            }
-                                            return next;
-                                          });
-                                        }}
-                                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
-                                      >
-                                        {expandedAdditionalMetadata.has(record.id)
-                                          ? "Hide Additional Metadata"
-                                          : "Additional Metadata"}
-                                      </button>
-
-                                      {expandedAdditionalMetadata.has(record.id) && (
-                                        <div className="mt-3 space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                                          {Object.entries(record.additional_metadata).map(([key, value]) => (
-                                            <div
-                                              key={key}
-                                              className="text-xs text-slate-600"
-                                            >
-                                              <span className="font-semibold text-slate-700">
-                                                {key}:
-                                              </span>{" "}
-                                              {value === null || value === undefined || value === ""
-                                                ? "—"
-                                                : String(value)}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <span className="text-sm text-slate-400">—</span>
-                                  )}
-                                </td>
-                              </tr>
-                            )
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              </>
+              <MetadataRegistry
+                 metadata={metadata}
+                 departments={departments}
+                 documents={documents}
+                 selectedDepartment={selectedDepartment}
+                 selectedDepartmentDocuments={selectedDepartmentDocuments}
+                 filteredMetadata={filteredMetadata}
+                 searchTerm={searchTerm}
+                 canManageMetadata={canManageMetadata}
+                 loading={loading}
+                 expandedAdditionalMetadata={expandedAdditionalMetadata}
+                 setExpandedAdditionalMetadata={setExpandedAdditionalMetadata}
+                 setSearchTerm={setSearchTerm}
+                 setSelectedDepartmentId={setSelectedDepartmentId}
+                 setShowMetadataModal={setShowMetadataModal}
+                 setShowBulkMetadataModal={setShowBulkMetadataModal}
+                 SummaryCard={SummaryCard}
+                 StatusBadge={StatusBadge}
+               />
             )}
 
             {/* ===================================================== */}
@@ -3033,200 +1862,35 @@ const selectedDepartmentDocuments =
 
             {activePage ===
               "Documents" && (
-              <>
-                <div className="mb-8 rounded-2xl bg-slate-900 p-7 text-white">
-                  <p className="text-sm font-semibold text-slate-300">
-                    DOCUMENT LIBRARY
-                  </p>
-
-                  <h2 className="mt-2 text-3xl font-bold">
-                    Institutional Document Library
-                  </h2>
-
-                  <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-                    Securely store, identify and organize incoming PDF and
-                    DOCX records. Each uploaded document receives a unique
-                    system document code.
-                  </p>
-
-                  {canManageDocuments && (
-<button
-                    type="button"
-                    onClick={() =>
-                      setShowUploadModal(
-                        true
-                      )
-                    }
-                    className="mt-6 rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-900 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-slate-900"
-                  >
-                    + Upload Document
-                  </button>
-                  )}
-                </div>
-
-                <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  <div className="border-b border-slate-200 px-6 py-5">
-                    <h3 className="font-bold">
-                      Uploaded Documents
-                    </h3>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                      {dashboardDocumentFilter === "ALL"
-                        ? "Documents currently stored in the records system."
-                        : dashboardDocumentFilter === "LINKED"
-                          ? "Showing documents linked to metadata."
-                          : dashboardDocumentFilter === "UNLINKED"
-                            ? "Showing documents requiring appraisal."
-                            : "Showing documents requiring review."}
-                    </p>
-                  </div>
-
-                  {loading ? (
-                    <div
-                      role="status"
-                      aria-live="polite"
-                      className="p-10 text-center text-sm text-slate-500"
-                    >
-                      Loading documents...
-                    </div>
-                  ) : dashboardFilteredDocuments.length ===
-                    0 ? (
-                    <div className="p-12 text-center">
-                      <div
-                        aria-hidden="true"
-                        className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100"
-                      >
-                        ▣
-                      </div>
-
-                      <h3 className="mt-4 font-bold">
-                        No documents uploaded
-                      </h3>
-
-                      <p className="mt-2 text-sm text-slate-500">
-                        Upload your first PDF or DOCX document to begin
-                        the appraisal workflow.
-                      </p>
-
-                      {canManageDocuments && (
-<button
-                        type="button"
-                        onClick={() =>
-                          setShowUploadModal(
-                            true
-                          )
-                        }
-                        className="mt-5 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                      >
-                        Upload Document
-                      </button>
-                        )}
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-sm">
-                        <thead className="border-b border-slate-200 bg-slate-50">
-                          <tr>
-                            <th className="px-5 py-4 font-semibold">
-                              Document Code
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Filename
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Type
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Size
-                            </th>
-
-                            <th className="px-5 py-4 font-semibold">
-                              Status
-                            </th>
-                            <th className="px-5 py-4 text-right font-semibold">
-                              Action
-                            </th>
-                          </tr>
-                        </thead>
-
-                        <tbody>
-                          {dashboardFilteredDocuments.map(
-                            (document) => (
-                              <tr
-                                key={
-                                  document.id
-                                }
-                                className="border-b border-slate-100 last:border-0 hover:bg-slate-50"
-                              >
-                                <td className="px-5 py-5">
-                                  <span className="font-bold text-blue-600">
-                                    {
-                                      document.document_code ??
-                                      "—"
-                                    }
-                                  </span>
-                                </td>
-
-                                <td className="px-5 py-5 font-medium">
-                                  {
-                                    document.filename ??
-                                    "—"
-                                  }
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  {
-                                    document.file_type ??
-                                    "—"
-                                  }
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  {formatFileSize(
-                                    document.file_size
-                                  )}
-                                </td>
-
-                                <td className="px-5 py-5">
-                                  <StatusBadge
-                                    status={
-                                      document.status ??
-                                      "UNKNOWN"
-                                    }
-                                  />
-                                </td>
-                                <td className="px-5 py-5 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (document.id == null) {
-                                        setReviewError(
-                                          "This document does not have a valid document ID."
-                                        );
-                                        return;
-                                      }
-
-                                      handleOpenDocument(
-                                        document.id
-                                      );
-                                    }}
-                                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2"
-                                  >
-                                    Open
-                                  </button>
-                                </td>
-                              </tr>
-                            )
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </section>
-              </>
+              <Documents
+                documents={documents}
+                dashboardFilteredDocuments={
+                  dashboardFilteredDocuments
+                }
+                metadata={metadata}
+                dashboardDocumentFilter={
+                  dashboardDocumentFilter
+                }
+                canManageDocuments={
+                  canManageDocuments
+                }
+                loading={loading}
+                setShowUploadModal={
+                  setShowUploadModal
+                }
+                setReviewError={
+                  setReviewError
+                }
+                handleOpenDocument={
+                  handleOpenDocument
+                }
+                formatFileSize={
+                  formatFileSize
+                }
+                StatusBadge={
+                  StatusBadge
+                }
+              />
             )}
 
             {/* ===================================================== */}
@@ -5743,73 +4407,9 @@ disabled:cursor-not-allowed disabled:opacity-50"
 /* NAV ITEM */
 /* =============================================================== */
 
-function NavItem({
-  icon,
-  label,
-  active = false,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  active?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-current={
-        active
-          ? "page"
-          : undefined
-      }
-      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-slate-900 focus:ring-offset-2 ${
-        active
-          ? "bg-slate-900 text-white shadow-sm"
-          : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-      }`}
-    >
-      <span
-        aria-hidden="true"
-        className="w-5 text-center"
-      >
-        {icon}
-      </span>
-
-      {label}
-    </button>
-  );
-}
-
 /* =============================================================== */
 /* WORKFLOW STEP */
-/* =============================================================== */
-
-function WorkflowStep({
-  number,
-  title,
-  text,
-}: {
-  number: string;
-  title: string;
-  text: string;
-}) {
-  return (
-    <div className="flex gap-4">
-      <div
-        aria-hidden="true"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-[10px] font-bold text-slate-600"
-      >
-        {number}
-      </div>
-
-      <div>
-        <p className="text-sm font-bold">
-          {title}
-        </p>
-
-        <p className="mt-1 text-xs leading-5 text-slate-500">
-          {text}
+/* =======    {text}
         </p>
       </div>
     </div>
@@ -6011,6 +4611,42 @@ function SettingRow({
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
