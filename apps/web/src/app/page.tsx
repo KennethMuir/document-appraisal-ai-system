@@ -860,7 +860,7 @@ const openDepartmentRecords = (
       const formData = new FormData();
       formData.append("file", bulkMetadataFile);
 
-      const response = await await previewBulkMetadata(formData);
+      const response = await previewBulkMetadata(formData);
 
       const data = await response.json();
 
@@ -905,7 +905,7 @@ const openDepartmentRecords = (
       const formData = new FormData();
       formData.append("file", bulkMetadataFile);
 
-      const response = await await importBulkMetadata(formData);
+      const response = await importBulkMetadata(formData);
 
       const data = await response.json();
 
